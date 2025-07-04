@@ -1,0 +1,8 @@
+aiogram==3.7.0
+python-dotenv==1.0.1
+langchain-gigachat==0.1.5
+langchain-chroma==0.1.1
+sentence-transformers==2.7.0
+thefuzz==0.22.1
+aiosqlite==0.20.0
+pydantic==2.7.4
