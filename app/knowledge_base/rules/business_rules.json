@@ -1,0 +1,60 @@
+{
+  "rules": [
+    {
+      "comment": "Правило для тех, кто слишком мал (младше 9).",
+      "condition": {
+        "key": "child_age",
+        "type": "less_than",
+        "value": 9
+      },
+      "action": {
+        "type": "return_message",
+        "key": "final_response",
+        "value": "Мне очень жаль, но на данный момент мы принимаем на курсы детей только с 9 лет. Будем рады видеть вас в будущем, когда ваш ребенок немного подрастет!"
+      }
+    },
+    {
+      "comment": "Правило для младшей группы (9-13 лет).",
+      "condition": {
+        "key": "child_age",
+        "type": "range",
+        "value": [9, 13]
+      },
+      "action": {
+        "type": "set_outcome",
+        "key": "course_name",
+        "value": "Основы программирования на Python (30 уроков)"
+      }
+    },
+    {
+      "comment": "Правило для старшей группы (14-17 лет).",
+      "condition": {
+        "key": "child_age",
+        "type": "range",
+        "value": [14, 17]
+      },
+      "action": {
+        "type": "set_outcome",
+        "key": "course_name",
+        "value": "Базовый курс Python (20 уроков)"
+      }
+    },
+    {
+      "comment": "Правило для тех, кто слишком взрослый (старше 17).",
+      "condition": {
+        "key": "child_age",
+        "type": "greater_than",
+        "value": 17
+      },
+      "action": {
+        "type": "return_message",
+        "key": "final_response",
+        "value": "Спасибо за интерес! Наши текущие программы рассчитаны на возраст до 17 лет. Возможно, в будущем у нас появятся курсы и для взрослых. Следите за анонсами!"
+      }
+    }
+  ],
+  "default_outcome": {
+    "key": "course_name",
+    "value": "наиболее подходящий для этого возраста курс"
+  }
+}

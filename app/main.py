@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 
 # ИСПРАВЛЕНО: Правильное имя переменной и пути импорта
 from app.config import TELEGRAM_BOT_TOKEN
-from app.handlers import common, sales_funnel
+from app.handlers import common, sales_funnel, callback_handlers
 from app.db.database import init_db
 
 # Настройка логирования перенесена в config.py, здесь она не нужна
@@ -27,6 +27,7 @@ async def main():
 
     dp.include_router(common.router)
     dp.include_router(sales_funnel.router)
+    dp.include_router(callback_handlers.router) 
     logging.info("Обработчики зарегистрированы.")
 
     logging.info("Бот запускается...")

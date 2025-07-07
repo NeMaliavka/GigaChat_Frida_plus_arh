@@ -1,13 +1,15 @@
 import logging
-from typing import List
+from typing import List, Dict
 
 from langchain_gigachat.chat_models import GigaChat
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
 
-from app.config import SBERCLOUD_API_KEY, GIGACHAT_MODEL, GIGACHAT_MAX_TOKENS
+from app.config import (
+    SBERCLOUD_API_KEY, GIGACHAT_MODEL, GIGACHAT_MAX_TOKENS,
+    KEYWORDS_PATH, DISTANCE_THRESHOLD
+)
 from app.knowledge_base.loader import vectorstore, SYSTEM_PROMPT
 
-# Инициализация модели GigaChat
 try:
     gigachat = GigaChat(
         credentials=SBERCLOUD_API_KEY,
@@ -16,24 +18,92 @@ try:
         max_tokens=GIGACHAT_MAX_TOKENS,
         verify_ssl_certs=False,
     )
-    logging.info(f"Модель GigaChat '{GIGACHAT_MODEL}' успешно инициализирована.")
+    logging.info(f"Основная модель GigaChat '{GIGACHAT_MODEL}' успешно инициализирована.")
 except Exception as e:
     logging.error(f"Ошибка инициализации GigaChat: {e}", exc_info=True)
     gigachat = None
 
-def _build_prompt(context: str, history: List[dict]) -> List[BaseMessage]:
-    """
-    Формирует промпт для GigaChat с учетом строгих инструкций, истории и контекста.
-    """
-    try:
-        prompt_template = SYSTEM_PROMPT.format(context=context)
-    except KeyError:
-        logging.warning("В системном промпте отсутствует плейсхолдер '{context}'.")
-        prompt_template = SYSTEM_PROMPT + "\n\nКонтекст:\n" + context
 
-    messages: List[BaseMessage] = [SystemMessage(content=prompt_template)]
+# --- AI-КОРРЕКТОР ---
+async def correct_user_query(question: str) -> str:
+    if not gigachat:
+        return question
+
+    corrector_prompt = (
+        "Ты — редактор-корректор. Исправь орфографические и грамматические ошибки в предложении, "
+        "полностью сохранив его первоначальный смысл и стиль. Если ошибок нет, верни исходное предложение без изменений.\n"
+        f"Предложение: '{question}'"
+    )
+    try:
+        response = await gigachat.ainvoke([SystemMessage(content=corrector_prompt)], max_tokens=150)
+        corrected_text = response.content.strip()
+        if corrected_text != question:
+            logging.info(f"Запрос пользователя скорректирован: '{question}' -> '{corrected_text}'")
+        return corrected_text
+    except Exception as e:
+        logging.error(f"Ошибка при коррекции запроса: {e}")
+        return question
+
+
+# --- AI-КЛАССИФИКАТОР ---
+def _load_keywords() -> str:
+    try:
+        with open(KEYWORDS_PATH, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except Exception:
+        logging.error(f"Не удалось загрузить ключевые слова из {KEYWORDS_PATH}")
+        return ""
+
+RELEVANT_KEYWORDS_LIST = _load_keywords()
+
+async def is_query_relevant_ai(question: str, history: List[Dict[str, str]]) -> bool:
+    if not gigachat or not RELEVANT_KEYWORDS_LIST:
+        logging.warning("Пропуск проверки релевантности (отсутствует сервис или ключевые слова).")
+        return True
+
+    last_assistant_message = ""
+    if history and len(history) > 1 and history[-2]["role"] == "assistant":
+        last_assistant_message = history[-2]["content"]
+
+    gateway_prompt = (
+        f"Ты — бинарный классификатор. Определи, является ли запрос пользователя релевантным. "
+        f"Тематика проекта: '{RELEVANT_KEYWORDS_LIST}'.\n"
+        f"Контекст: последняя фраза бота была: '{last_assistant_message}'.\n"
+        f"Запрос пользователя: '{question}'.\n"
+        f"Это релевантный запрос или логичное продолжение диалога? Ответь 'Да' или 'Нет'."
+    )
+    try:
+        response = await gigachat.ainvoke([SystemMessage(content=gateway_prompt)], max_tokens=3)
+        answer = response.content.strip().lower()
+        logging.info(f"AI-классификатор ответил: '{answer}' для запроса '{question}'")
+        return "да" in answer
+    except Exception as e:
+        logging.error(f"Ошибка при проверке релевантности: {e}")
+        return True
+
+
+# --- AI-ГЕНЕРАТОР ---
+def _build_prompt(context: str, history: List[Dict[str, str]], context_key: str = "default") -> List[BaseMessage]:
+    """
+    Формирует промпт, добавляя в него указание на текущий контекст.
+    """
+    full_system_prompt = f"{SYSTEM_PROMPT}\n\n"
+
+    # Добавляем AI прямое указание, на чем фокусироваться
+    if context_key == "course_junior":
+        full_system_prompt += "ВАЖНОЕ УКАЗАНИЕ: Клиент интересуется курсом для младшей группы (9-13 лет). Сосредоточь все ответы ИСКЛЮЧИТЕЛЬНО на этом курсе. Не упоминай другие курсы.\n\n"
+    elif context_key == "course_senior":
+        full_system_prompt += "ВАЖНОЕ УКАЗАНИЕ: Клиент интересуется курсом для старшей группы (14-17 лет). Сосредоточь все ответы ИСКЛЮЧИТЕЛЬНО на этом курсе. Не упоминай другие курсы.\n\n"
+
+    full_system_prompt += (
+        f"Опираясь на предоставленный ниже контекст, ответь на следующий вопрос пользователя.\n"
+        f"--- КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ ---\n"
+        f"{context}\n"
+        f"--- КОНЕЦ КОНТЕКСТА ---"
+    )
     
-    # Добавляем историю диалога. Последнее сообщение пользователя уже в history.
+    messages: List[BaseMessage] = [SystemMessage(content=full_system_prompt)]
+    
     for msg in history:
         if msg["role"] == "user":
             messages.append(HumanMessage(content=msg["content"]))
@@ -42,59 +112,40 @@ def _build_prompt(context: str, history: List[dict]) -> List[BaseMessage]:
             
     return messages
 
-def get_llm_response(question: str, history: List[dict]) -> str:
+async def get_llm_response(question: str, history: List[Dict[str, str]], context_key: str = "default") -> str:
     """
-    Получает ответ от LLM, используя RAG с порогом релевантности, и логирует расход токенов.
+    Получает развернутый ответ от "умной" LLM, учитывая контекст диалога.
     """
     if not gigachat:
-        return "Извините, сервис временно недоступен из-за проблем с подключением к нейросети."
+        return "Извините, сервис временно недоступен."
 
     try:
-        # 1. Поиск документов с оценкой релевантности (L2-дистанция)
-        DISTANCE_THRESHOLD = 0.8  # Порог. Чем меньше, тем более похожи.
-        
-        docs_with_scores = vectorstore.similarity_search_with_score(question, k=3)
-        logging.info(f"Найденные документы с оценками (дистанция): {docs_with_scores}")
+        # Шаг 1: Находим релевантные знания в документах
+        docs = await vectorstore.asimilarity_search(question, k=3)
+        context = "\n---\n".join([doc.page_content for doc in docs]) if docs else "Информация по данному вопросу в базе знаний отсутствует."
 
-        # 2. Фильтрация документов по порогу
-        relevant_docs = [doc for doc, score in docs_with_scores if score < DISTANCE_THRESHOLD]
-
-        # 3. Формирование контекста для AI
-        if not relevant_docs:
-            logging.warning(f"Релевантный контекст не найден (оценка выше порога {DISTANCE_THRESHOLD}). Ответ будет сгенерирован без контекста.")
-            context = "Информация по данному вопросу в базе знаний отсутствует."
-        else:
-            best_score = docs_with_scores[0][1]
-            logging.info(f"Найден релевантный контекст. Лучшая оценка: {best_score}")
-            context = "\n---\n".join([doc.page_content for doc in relevant_docs])
-
-        # 4. Формирование полного промпта
-        # Передаем историю, в которой уже есть последний вопрос пользователя
-        prompt_messages = _build_prompt(context, history)
+        # Шаг 2: Формируем правильный промпт, передавая контекст
+        prompt_messages = _build_prompt(context, history, context_key)
+        prompt_messages.append(HumanMessage(content=question))
         
-        # 5. Запрос к GigaChat и логирование токенов
-        logging.info(">>> Отправка запроса к GigaChat...")
-        response = gigachat.invoke(prompt_messages)
+        # Шаг 3: Делаем запрос к AI
+        logging.info(f">>> Отправка запроса к GigaChat с контекстом '{context_key}'...")
+        response = await gigachat.ainvoke(prompt_messages)
         
-        response_text = response.content.strip()
-        usage_metadata = response.usage_metadata
-        
+        usage_metadata = getattr(response, "usage_metadata", None)
         if usage_metadata:
             prompt_tokens = usage_metadata.get('prompt_tokens', 0)
             completion_tokens = usage_metadata.get('completion_tokens', 0)
             total_tokens = usage_metadata.get('total_tokens', 0)
-            
             logging.info(
-                f"<<< Получен ответ от GigaChat. "
-                f"Токены запроса: {prompt_tokens}, "
-                f"Токены ответа: {completion_tokens}, "
-                f"Всего: {total_tokens}"
+                f"<<< Получен ответ. Токены: {prompt_tokens} (запрос) + {completion_tokens} (ответ) = {total_tokens} (всего)"
             )
         else:
             logging.warning("Метаданные о токенах не найдены в ответе GigaChat.")
         
-        return response_text
+        return response.content.strip()
         
     except Exception as e:
         logging.error(f"Ошибка при обращении к GigaChat: {e}", exc_info=True)
         return "К сожалению, произошла техническая ошибка. Пожалуйста, попробуйте позже."
+

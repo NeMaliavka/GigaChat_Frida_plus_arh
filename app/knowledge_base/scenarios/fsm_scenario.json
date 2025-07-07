@@ -1,0 +1,34 @@
+{
+  "scenario_name": "enrollment",
+  
+  "onboarding_intro": "Здравствуйте! Я Ноубаг, AI-ассистент. Чтобы наше общение было максимально продуктивным, давайте сначала познакомимся!\n\n",
+  
+  "start_message": "Как я могу к вам обращаться?",
+  "initial_state": "awaiting_parent_name",
+
+  "states": {
+    "awaiting_parent_name": {
+      "question": "Приятно познакомиться, {previous_answer}! А как зовут вашего будущего чемпиона по программированию?",
+      "data_key": "parent_name",
+      "next_state": "awaiting_child_name"
+    },
+    "awaiting_child_name": {
+      "question": "Сколько лет Вашему ребёнку?",
+      "data_key": "child_name",
+      "next_state": "awaiting_child_age"
+    },
+    "awaiting_child_age": {
+      "question": "Спасибо! И последний вопрос: чем ваш ребёнок увлекается? Это поможет преподавателю найти с ним общий язык.",
+      "data_key": "child_age",
+      "validation": "digits",
+      "error_message": "Пожалуйста, укажите возраст цифрами.",
+      "next_state": "awaiting_child_hobbies"
+    },
+    "awaiting_child_hobbies": {
+      "question": null, 
+      "data_key": "child_hobbies",
+      "next_state": null
+    }
+  },
+
+   "final_message_template": "Спасибо! Я все записал.\n\n{child_name_dative} по возрасту лучше всего подойдёт наш курс «{course_name}».\n\n{parent_name_capitalized}, желаете узнать подробнее о программе или подберем время для пробного урока?"}

@@ -1,29 +1,28 @@
+import logging
 from aiogram import Router, types
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 
+# ВАЖНО: Импортируем наши сервисы для работы с шаблонами
 from app.core.template_service import find_template, choose_variant
-from app.db.database import save_history, load_history
+from app.db.database import get_or_create_user
 
 router = Router()
 
 @router.message(CommandStart())
-async def handle_start(message: types.Message):
-    """Обработчик команды /start."""
-    user_id = str(message.from_user.id)
+async def handle_start(message: types.Message, state: FSMContext):
+    """
+    Универсальный обработчик команды /start.
+    Берет приветствие из внешнего файла шаблонов.
+    """
+    await state.clear()
+    await get_or_create_user(message.from_user.id, message.from_user.username)
     
-    # Сохраняем команду пользователя в историю
-    await save_history(user_id, "user", message.text)
+    # Ищем шаблон по зарезервированному ключу "start_greeting"
+    _key, template_variants = find_template("start_greeting")
     
-    # Загружаем историю, чтобы избежать повторений
-    history = await load_history(user_id)
-    
-    # Ищем шаблон для приветствия
-    greeting_template = find_template("приветствие")
-    if greeting_template:
-        response_text = choose_variant(greeting_template, history)
-    else:
-        response_text = "Здравствуйте! Я ИИ-ассистент школы No Bugs. Чем могу помочь?"
-        
-    await message.answer(response_text)
-    await save_history(user_id, "assistant", response_text)
+    # Выбираем случайный вариант приветствия
+    welcome_text = choose_variant(template_variants) if template_variants else "Здравствуйте!"
 
+    await message.answer(welcome_text)
+    logging.info(f"Пользователь {message.from_user.id} нажал /start.")

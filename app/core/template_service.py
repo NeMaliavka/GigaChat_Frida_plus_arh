@@ -1,61 +1,40 @@
 import random
-import re
-# ИСПРАВЛЕНО: Добавляем Tuple в импорты
-from typing import Any, Dict, List, Tuple
-import importlib.util
+from typing import List, Tuple, Optional, Dict
 from thefuzz import fuzz
 
-from app.config import TEMPLATES_PATH
+# Импортируем новую, вложенную структуру шаблонов
+from app.knowledge_base.documents.templates import TEMPLATES
 
-def load_templates(path: str):
-    """Динамически загружает шаблоны из Python файла."""
-    try:
-        spec = importlib.util.spec_from_file_location("templates", path)
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return getattr(module, "TEMPLATES", {})
-        else:
-            print(f"Ошибка: не удалось создать spec для {path}")
-            return {}
-    except Exception as e:
-        print(f"Ошибка загрузки шаблонов: {e}")
-        return {}
+SIMILARITY_THRESHOLD = 90
 
-TEMPLATES = load_templates(TEMPLATES_PATH)
-REGEX_CACHE: Dict[str, re.Pattern] = {}
-
-def find_template(text: str) -> Tuple[str | None, Any]:
+def find_template(user_text: str, context_key: str = "default") -> Tuple[Optional[str], Optional[List[str]]]:
     """
-    Находит подходящий шаблон и его ключ по тексту пользователя.
-    Возвращает (ключ, значение) или (None, None).
+    Находит шаблон, сначала ища в "ящике" для конкретного контекста,
+    а затем — в "общем" ящике.
     """
-    lower_text = text.lower()
-    for keys, value in TEMPLATES.items():
-        # Проверяем, что keys - это строка, а не что-то другое
-        if not isinstance(keys, str):
-            continue
-            
-        for key in keys.split('/'):
-            key_clean = key.strip()
-            # Убеждаемся, что ключ не пустой
-            if not key_clean:
-                continue
-            
-            if fuzz.token_set_ratio(key_clean, lower_text) > 80:
-                return keys, value
+    lower_user_text = user_text.lower()
+
+    # 1. Сначала ищем в контекстном "ящике" (например, "course_junior")
+    context_templates = TEMPLATES.get(context_key, {})
+    for key, value in context_templates.items():
+        template_phrases = key.split('/')
+        for phrase in template_phrases:
+            if fuzz.token_set_ratio(lower_user_text, phrase.lower()) >= SIMILARITY_THRESHOLD:
+                return key, value
+    
+    # 2. Если не нашли, ищем в "общем" ящике
+    common_templates = TEMPLATES.get("common", {})
+    for key, value in common_templates.items():
+        template_phrases = key.split('/')
+        for phrase in template_phrases:
+            if fuzz.token_set_ratio(lower_user_text, phrase.lower()) >= SIMILARITY_THRESHOLD:
+                return key, value
+
+    # Если ничего не найдено
     return None, None
 
-def choose_variant(candidate: Any, history: List[Dict[str, str]]) -> str:
-    """Выбирает один из вариантов ответа, избегая повторений."""
-    if not isinstance(candidate, list):
-        return str(candidate)
-    
-    assistant_responses = {m["content"] for m in history if m["role"] == "assistant"}
-    available_options = [var for var in candidate if var not in assistant_responses]
-    
-    if available_options:
-        return random.choice(available_options)
-    
-    return random.choice(candidate)
-
+def choose_variant(variants: List[str]) -> str:
+    """Выбирает случайный вариант ответа из списка."""
+    if not variants:
+        return ""
+    return random.choice(variants)

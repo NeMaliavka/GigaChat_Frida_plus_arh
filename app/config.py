@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 # Загружаем переменные окружения из файла .env
 load_dotenv()
 
+
 # Настройка SSL-сертификата (если необходимо)
 CERT_FILENAME = "russian_trusted_root_ca.cer"
 cert_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), CERT_FILENAME)
@@ -17,7 +18,7 @@ else:
 
 # --- Telegram ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID", "0"))
+ADMIN_ID = int(os.getenv("OWNER_CHAT_ID", "0"))
 
 # --- GigaChat ---
 SBERCLOUD_API_KEY = os.getenv("SBERCLOUD_API_KEY")
@@ -27,6 +28,8 @@ GIGACHAT_MAX_TOKENS = int(os.getenv("GIGACHAT_MAX_TOKENS", "1024"))
 # --- Базы данных ---
 DB_PATH = os.getenv("DB_PATH", "db/chat_history.db")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "db/chroma_db")
+# --- Переменная для подключения к базе данных ---
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- Окружение и логирование ---
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
@@ -39,6 +42,8 @@ BITRIX24_RESPONSIBLE_ID = int(os.getenv("BITRIX24_RESPONSIBLE_ID", "1"))
 # --- Пути к файлам знаний ---
 PROMPT_PATH = os.getenv("PROMPT_PATH", "app/knowledge_base/documents/lor.txt")
 TEMPLATES_PATH = os.getenv("TEMPLATES_PATH", "app/knowledge_base/documents/templates.py")
+KEYWORDS_PATH="app/knowledge_base/documents/keywords.txt"
+DISTANCE_THRESHOLD = 0.9 
 
 
 # --- Валидация обязательных переменных ---
