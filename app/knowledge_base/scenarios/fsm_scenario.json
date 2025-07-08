@@ -1,34 +1,40 @@
 {
-  "scenario_name": "enrollment",
-  
-  "onboarding_intro": "Здравствуйте! Я Ноубаг, AI-ассистент. Чтобы наше общение было максимально продуктивным, давайте сначала познакомимся!\n\n",
-  
-  "start_message": "Как я могу к вам обращаться?",
-  "initial_state": "awaiting_parent_name",
-
+  "scenario_name": "Стандартный онбординг и запись на пробный урок",
+  "onboarding_intro": "Здравствуйте! Я Ноубаг, AI-ассистент. Чтобы наше общение было максимально продуктивным, давайте сначала познакомимся!",
+  "initial_state": "ask_parent_name",
   "states": {
-    "awaiting_parent_name": {
-      "question": "Приятно познакомиться, {previous_answer}! А как зовут вашего будущего чемпиона по программированию?",
+    "ask_parent_name": {
+      "comment": "Шаг 1: Задаем вопрос про имя родителя.",
+      "question": "Как я могу к вам обращаться?",
       "data_key": "parent_name",
-      "next_state": "awaiting_child_name"
+      "needs_layout_correction": true,
+      "validation": "name",
+      "error_message": "Мне кажется, это не очень похоже на имя. Пожалуйста, введите ваше настоящее имя кириллицей.",
+      "next_state": "ask_child_name"
     },
-    "awaiting_child_name": {
-      "question": "Сколько лет Вашему ребёнку?",
+    "ask_child_name": {
+      "comment": "Шаг 2: Задаем вопрос про имя ребенка.",
+      "question": "Приятно познакомиться, {parent_name}! А как зовут вашего будущего чемпиона по программированию?",
       "data_key": "child_name",
-      "next_state": "awaiting_child_age"
+      "needs_layout_correction": true,
+      "validation": "name",
+      "error_message": "Пожалуйста, введите настоящее имя вашего ребенка, используя только буквы.",
+      "next_state": "ask_child_age"
     },
-    "awaiting_child_age": {
-      "question": "Спасибо! И последний вопрос: чем ваш ребёнок увлекается? Это поможет преподавателю найти с ним общий язык.",
+    "ask_child_age": {
+      "comment": "Шаг 3: Задаем вопрос про возраст ребенка.",
+      "question": "Сколько лет {child_name:datv}?",
       "data_key": "child_age",
       "validation": "digits",
-      "error_message": "Пожалуйста, укажите возраст цифрами.",
-      "next_state": "awaiting_child_hobbies"
+      "error_message": "Пожалуйста, введите возраст цифрами.",
+      "next_state": "ask_child_hobbies"
     },
-    "awaiting_child_hobbies": {
-      "question": null, 
+    "ask_child_hobbies": {
+      "comment": "Шаг 4: Задаем вопрос про хобби. Это финальный шаг сбора данных.",
+      "question": "Понял, спасибо! И последний вопрос: чем увлекается {child_name}? Это поможет преподавателю найти с ним общий язык.",
       "data_key": "child_hobbies",
       "next_state": null
     }
   },
-
-   "final_message_template": "Спасибо! Я все записал.\n\n{child_name_dative} по возрасту лучше всего подойдёт наш курс «{course_name}».\n\n{parent_name_capitalized}, желаете узнать подробнее о программе или подберем время для пробного урока?"}
+  "final_message_template": "Спасибо! Я все записал.\n\nСудя по возрасту, {child_name:datv} идеально подойдет наш курс «{course_name}».\n\n{parent_name}, хотите записать {child_name:accs} на бесплатный пробный урок, чтобы посмотреть, как все устроено изнутри?"
+}

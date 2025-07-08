@@ -1,40 +1,59 @@
 import random
-from typing import List, Tuple, Optional, Dict
-from thefuzz import fuzz
+import logging
+from typing import List, Dict, Tuple
 
-# Импортируем новую, вложенную структуру шаблонов
-from app.knowledge_base.documents.templates import TEMPLATES
+# Предполагается, что ваш файл templates.py находится здесь
+# и в нем есть переменная TEMPLATES
+try:
+    from app.knowledge_base.documents.templates import TEMPLATES
+except ImportError:
+    logging.error("Не удалось импортировать TEMPLATES из app.knowledge_base.documents.templates")
+    TEMPLATES = {}
 
-SIMILARITY_THRESHOLD = 90
-
-def find_template(user_text: str, context_key: str = "default") -> Tuple[Optional[str], Optional[List[str]]]:
+def find_template_by_keywords(user_text: str) -> Tuple[str | None, dict | list | None]:
     """
-    Находит шаблон, сначала ища в "ящике" для конкретного контекста,
-    а затем — в "общем" ящике.
+    Находит наиболее подходящий шаблон по ключевым словам.
+    Ключи словаря TEMPLATES теперь могут содержать несколько ключевых слов через '/'.
     """
-    lower_user_text = user_text.lower()
-
-    # 1. Сначала ищем в контекстном "ящике" (например, "course_junior")
-    context_templates = TEMPLATES.get(context_key, {})
-    for key, value in context_templates.items():
-        template_phrases = key.split('/')
-        for phrase in template_phrases:
-            if fuzz.token_set_ratio(lower_user_text, phrase.lower()) >= SIMILARITY_THRESHOLD:
-                return key, value
-    
-    # 2. Если не нашли, ищем в "общем" ящике
-    common_templates = TEMPLATES.get("common", {})
-    for key, value in common_templates.items():
-        template_phrases = key.split('/')
-        for phrase in template_phrases:
-            if fuzz.token_set_ratio(lower_user_text, phrase.lower()) >= SIMILARITY_THRESHOLD:
-                return key, value
-
-    # Если ничего не найдено
+    user_text_lower = user_text.lower()
+    for keys, template_data in TEMPLATES.items():
+        # Разделяем строку с ключами на отдельные ключевые слова
+        keywords = [key.strip() for key in keys.split('/')]
+        if any(keyword in user_text_lower for keyword in keywords):
+            return keys, template_data
     return None, None
 
-def choose_variant(variants: List[str]) -> str:
-    """Выбирает случайный вариант ответа из списка."""
-    if not variants:
-        return ""
-    return random.choice(variants)
+def build_template_response(template_data: dict | list, history: List[Dict]) -> str:
+    """
+    Собирает "умный" ответ из шаблона, анализируя историю диалога.
+    """
+    # Если шаблон - это просто список строк (старый формат), работаем как раньше
+    if isinstance(template_data, list):
+        return random.choice(template_data)
+    
+    # Если шаблон - это словарь (новый формат)
+    if isinstance(template_data, dict):
+        response_parts = []
+        
+        # Простое правило: приветствуем, если это одно из первых сообщений в диалоге
+        # (предполагаем, что история содержит сообщения от user и assistant)
+        is_dialog_start = len(history) <= 4 
+
+        # 1. Добавляем приветствие, если это уместно
+        if is_dialog_start and (greetings := template_data.get("greeting")):
+            if isinstance(greetings, list) and greetings:
+                response_parts.append(random.choice(greetings))
+
+        # 2. Добавляем основное тело ответа
+        if body := template_data.get("body"):
+            response_parts.append(body)
+
+        # 3. Добавляем завершающий вопрос
+        if follow_ups := template_data.get("follow_up"):
+            if isinstance(follow_ups, list) and follow_ups:
+                response_parts.append(random.choice(follow_ups))
+
+        return "\n\n".join(filter(None, response_parts))
+    
+    return "Не удалось сформировать ответ по шаблону."
+
