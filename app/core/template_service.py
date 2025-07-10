@@ -25,6 +25,7 @@ async def build_template_response(template_data: dict | list, history: List[Dict
     """
     Собирает "умный" ответ из шаблона, анализируя историю, данные пользователя и счетчик учеников.
     """
+    print("!!! ЗАПУЩЕНА ПРАВИЛЬНАЯ ВЕРСИЯ build_template_response ИЗ TEMPLATE_SERVICE !!!")
     if isinstance(template_data, list):
         return random.choice(template_data)
     
@@ -73,37 +74,38 @@ def find_template_by_keywords(user_text: str) -> Tuple[str | None, dict | list |
             return keys, template_data
     return None, None
 
-def build_template_response(template_data: dict | list, history: List[Dict]) -> str:
-    """
-    Собирает "умный" ответ из шаблона, анализируя историю диалога.
-    """
-    # Если шаблон - это просто список строк (старый формат), работаем как раньше
-    if isinstance(template_data, list):
-        return random.choice(template_data)
+# def build_template_response(template_data: dict | list, history: List[Dict]) -> str:
+#     """
+#     Собирает "умный" ответ из шаблона, анализируя историю диалога.
+#     """
+#     print("!!! ЗАПУЩЕНА ПРАВИЛЬНАЯ ВЕРСИЯ build_template_response ИЗ TEMPLATE_SERVICE !!!")
+#     # Если шаблон - это просто список строк (старый формат), работаем как раньше
+#     if isinstance(template_data, list):
+#         return random.choice(template_data)
     
-    # Если шаблон - это словарь (новый формат)
-    if isinstance(template_data, dict):
-        response_parts = []
+#     # Если шаблон - это словарь (новый формат)
+#     if isinstance(template_data, dict):
+#         response_parts = []
         
-        # Простое правило: приветствуем, если это одно из первых сообщений в диалоге
-        # (предполагаем, что история содержит сообщения от user и assistant)
-        is_dialog_start = len(history) <= 4 
+#         # Простое правило: приветствуем, если это одно из первых сообщений в диалоге
+#         # (предполагаем, что история содержит сообщения от user и assistant)
+#         is_dialog_start = len(history) <= 4 
 
-        # 1. Добавляем приветствие, если это уместно
-        if is_dialog_start and (greetings := template_data.get("greeting")):
-            if isinstance(greetings, list) and greetings:
-                response_parts.append(random.choice(greetings))
+#         # 1. Добавляем приветствие, если это уместно
+#         if is_dialog_start and (greetings := template_data.get("greeting")):
+#             if isinstance(greetings, list) and greetings:
+#                 response_parts.append(random.choice(greetings))
 
-        # 2. Добавляем основное тело ответа
-        if body := template_data.get("body"):
-            response_parts.append(body)
+#         # 2. Добавляем основное тело ответа
+#         if body := template_data.get("body"):
+#             response_parts.append(body)
 
-        # 3. Добавляем завершающий вопрос
-        if follow_ups := template_data.get("follow_up"):
-            if isinstance(follow_ups, list) and follow_ups:
-                response_parts.append(random.choice(follow_ups))
+#         # 3. Добавляем завершающий вопрос
+#         if follow_ups := template_data.get("follow_up"):
+#             if isinstance(follow_ups, list) and follow_ups:
+#                 response_parts.append(random.choice(follow_ups))
 
-        return "\n\n".join(filter(None, response_parts))
+#         return "\n\n".join(filter(None, response_parts))
     
-    return "Не удалось сформировать ответ по шаблону."
+#     return "Не удалось сформировать ответ по шаблону."
 

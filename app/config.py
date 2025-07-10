@@ -38,6 +38,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # --- CRM Bitrix24 (опционально) ---
 BITRIX24_WEBHOOK_URL = os.getenv("BITRIX24_WEBHOOK_URL")
 BITRIX24_RESPONSIBLE_ID = int(os.getenv("BITRIX24_RESPONSIBLE_ID", "1"))
+TEACHER_IDS = int(os.getenv("TEACHER_IDS"))
 
 # --- Пути к файлам знаний ---
 PROMPT_PATH = os.getenv("PROMPT_PATH", "app/knowledge_base/documents/lor.txt")

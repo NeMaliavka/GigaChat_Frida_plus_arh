@@ -109,6 +109,8 @@ from app.config import TELEGRAM_BOT_TOKEN, LOG_LEVEL
 from app.handlers import common, sales_funnel, callback_handlers
 from app.db.database import init_db
 
+from app.services.bitrix_service import check_b24_connection
+
 async def main():
     """Главная функция для запуска бота."""
     
@@ -121,6 +123,9 @@ async def main():
 
     # Инициализация базы данных
     await init_db()
+    # Проверяем соединение с Битрикс24 перед запуском основной логики бота
+    logging.info("Проверка соединения с Битрикс24...")
+    await check_b24_connection()
 
     # Инициализируем хранилище состояний
     storage = MemoryStorage()
@@ -140,15 +145,18 @@ async def main():
     dp.include_router(sales_funnel.router)
     # ДОБАВЛЕНО: Регистрируем новый роутер для обработки кнопок
     dp.include_router(callback_handlers.router)
+    logging.info("Роутеры успешно зарегистрированы.")
 
     # Перед запуском polling удаляем все старые вебхуки
     await bot.delete_webhook(drop_pending_updates=True)
     
     # Запускаем polling
+    logging.info("Запуск бота...")
     try:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+        logging.info("Сессия бота закрыта.")
 
 if __name__ == "__main__":
     try:
