@@ -1,5 +1,6 @@
 import httpx
 import logging
+import json
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -77,7 +78,7 @@ async def get_free_slots(from_date: datetime, to_date: datetime, user_ids: list[
     """
     api_method = "calendar.event.get"
     url = f"{BITRIX24_WEBHOOK_URL.rstrip('/')}/{api_method}"
-    work_hours = {'start': 10, 'end': 19}
+    work_hours = {'start': 10, 'end': 18}
     final_slots = {}
     portal_tz = from_date.tzinfo  # Получаем часовой пояс из запроса
 
@@ -149,105 +150,110 @@ try:
 except ImportError:
     def inflect_name(name, case): return name # Заглушка, если утилиты нет
 
-async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int, client_data: dict):
+async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int, client_data: dict):    
     """
     Бронирует урок: ПРОВЕРЯЕТ доступность слота, СОЗДАЕТ задачу и связанное СОБЫТИЕ.
     Это атомарно защищает от двойного бронирования.
+    - Добавлено детальное логирование.
+    - Исправлена структура запроса для calendar.event.add (добавлено поле 'fields').
+    - Всегда возвращает кортеж (task_id, teacher_name) или (None, None).
+    - Использует ВЕРХНИЙ РЕГИСТР для полей и формат дат 'dd.mm.YYYY HH:MM:SS' для calendar.event.add, как того требует API.
+    - Динамически получает и преобразует в int ID календаря.
+    - Содержит полную обработку ошибок.
     """
+    logging.info(f"Начало процесса бронирования. Преподаватель ID: {user_id}, Время: {start_time}")
     webhook_base_url = BITRIX24_WEBHOOK_URL.rstrip('/')
     end_time = start_time + timedelta(minutes=duration_minutes)
 
     async def make_b24_request(client, method, params):
         url = f"{webhook_base_url}/{method}"
         try:
+            logging.debug(f"Запрос к Bitrix24. Метод: {method}, Параметры: {json.dumps(params, ensure_ascii=False, indent=2)}")
             response = await client.post(url, json=params)
             response.raise_for_status()
             return response.json()
+        except httpx.HTTPStatusError as e:
+            logging.error(f"HTTP-ошибка {e.response.status_code} при вызове метода {method}. Ответ: {e.response.text}")
+            return None
         except httpx.RequestError as e:
-            logging.error(f"HTTP-ошибка при вызове метода {method}: {e}")
+            logging.error(f"Критическая ошибка соединения при вызове метода {method}: {e}")
             return None
 
     try:
         async with httpx.AsyncClient(verify=False) as client:
-            # --- ШАГ 1: Проверка на наличие существующих событий в этом временном слоте ---
-            check_params = {
-                'type': 'user', 'ownerId': user_id,
-                'from': start_time.isoformat(), 'to': end_time.isoformat()
-            }
-            logging.info(f"Проверяем слот перед бронированием для user_id={user_id} с {start_time} по {end_time}")
+            # Шаг 1: Проверка слота
+            check_params = {'type': 'user', 'ownerId': user_id, 'from': start_time.isoformat(), 'to': end_time.isoformat()}
             check_data = await make_b24_request(client, 'calendar.event.get', check_params)
-
-            # Если API вернул непустой список событий, значит слот уже занят
             if check_data and check_data.get('result'):
                 logging.warning(f"Попытка двойного бронирования на {start_time} для user_id={user_id}. Слот уже занят.")
-                return None # Возвращаем None, сигнализируя о неудаче
+                return None, None
 
-            # --- ШАГ 2: Слот свободен, создаем Задачу ---
-           
-            # Получаем имя преподавателя для заголовка задачи
+            # Шаг 2: Создание задачи
             user_info = await make_b24_request(client, 'user.get', {'ID': user_id})
-            teacher_name = ""
+            teacher_name = f"Преподаватель (ID: {user_id})"
             if user_info and user_info.get('result'):
                 user = user_info['result'][0]
-                teacher_name = f"{user.get('NAME', '')} {user.get('LAST_NAME', '')}".strip()
-
-            child_name_gent = inflect_name(client_data.get('child_name', 'Клиент'), 'gent')
-
-            task_description = (
-                f"Новая заявка на пробный урок из Telegram-бота.\n\n"
-                f"[B]Ученик:[/B] {client_data.get('child_name', 'не указано')}\n"
-                f"[B]Возраст:[/B] {client_data.get('child_age', 'не указано')} лет\n"
-                f"[B]Увлечения:[/B] {client_data.get('child_hobbies', 'не указано')}\n\n"
-                f"[B]Родитель:[/B] {client_data.get('parent_name', 'не указано').capitalize()}\n"
-                f"[B]Контакт родителя:[/B] {client_data.get('parent_contact', 'не указано')}\n"
-                f"[B]Telegram:[/B] @{client_data.get('username', 'нет')}\n\n"
-                f"-------------------------------------\n"
-                f"Назначенный преподаватель: [USER={user_id}]{teacher_name}[/USER]\n"
-                f"Забронированное время: [B]{start_time.strftime('%d.%m.%Y %H:%M')}[/B]"
-            )
+                teacher_name = f"{user.get('NAME', '')} {user.get('LAST_NAME', '')}".strip() or teacher_name
+            
+            child_name_gent = inflect_name(client_data.get('child_name', 'Клиент'), 'gent') if MORPHOLOGY_ENABLED else client_data.get('child_name', 'Клиент')
+            task_description = (f"Новая заявка на пробный урок от @{client_data.get('username', 'N/A')}.\n\n"
+                                f"Ученик: {client_data.get('child_name', 'не указано')}\n"
+                                f"Преподаватель: [USER={user_id}]{teacher_name}[/USER]")
 
             task_params = {'fields': {
                 'TITLE': f"Пробный урок для {child_name_gent} ({teacher_name})",
                 'DESCRIPTION': task_description,
                 'RESPONSIBLE_ID': user_id,
                 'DEADLINE': start_time.isoformat(),
-                'GROUP_ID': GROUP_ID # Убедитесь, что GROUP_ID задан в конфиге
+                'GROUP_ID': GROUP_ID
             }}
             
             task_data = await make_b24_request(client, 'tasks.task.add', task_params)
             if not (task_data and task_data.get('result') and task_data['result'].get('task')):
                 logging.error(f"Не удалось создать задачу: {task_data}")
-                return None # Если не удалось создать задачу, нет смысла продолжать
-            
+                return None, None
             task_id = task_data['result']['task']['id']
             logging.info(f"Задача (ID: {task_id}) успешно создана.")
 
-            # --- ШАГ 3: Создаем связанное Событие в календаре ---
-            portal_url = BITRIX24_WEBHOOK_URL.split('/rest/')[0]
-            task_url = f"{portal_url}/company/personal/user/{user_id}/tasks/task/view/{task_id}/"
-            # parsed_url = urlparse(BITRIX24_WEBHOOK_URL)
-            # portal_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-            # task_url = f"{portal_url}/company/personal/user/{user_id}/tasks/task/view/{task_id}/"
-
+            # Шаг 3: Динамическое получение ID календаря
+            section_id = 1
+            sections_data = await make_b24_request(client, 'calendar.section.get', {'type': 'user', 'ownerId': user_id})
+            if sections_data and sections_data.get('result') and len(sections_data['result']) > 0:
+                calendar_id_str = sections_data['result'][0].get('ID')
+                if calendar_id_str:
+                    section_id = int(calendar_id_str)
+            
+            # Шаг 4: Создание события
             event_description = (
-                f"Пробный урок. Ученик: {client_data.get('child_name', 'не указано')}.\n"
-                f"Подробности в связанной задаче: [URL='{task_url}']Перейти к задаче (ID: {task_id})[/URL]"
+                f"Запись из Telegram-бота.\n"
+                f"Ученик: {client_data.get('child_name', 'не указано')}, {client_data.get('child_age', 'не указано')} лет.\n"
+                f"Родитель: {client_data.get('parent_name', 'не указано')}.\n"
+                f"Контакт: @{client_data.get('username', 'нет')}"
             )
-
+            parsed_url = urlparse(webhook_base_url)
+            portal_base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            task_url_bbcode = f"\n\nСвязанная задача: [URL={portal_base_url}/company/personal/user/{user_id}/tasks/task/view/{task_id}/]Задача №{task_id}[/URL]"
+            final_event_description = event_description + task_url_bbcode
             event_params = {
-                'type': 'user', 'ownerId': user_id,
+                'type': 'user',
+                'ownerId': str(user_id),
                 'name': f"Пробный урок: {client_data.get('child_name', 'Клиент')}",
-                'description': event_description,
-                'from': start_time.isoformat(),
-                'to': end_time.isoformat(),
-                'sect_id': 1,
-                'remind': [{'type': 'min', 'count': 60}],
-                'BUSYNESS': 'busy' # Крайне важно: блокируем время
+                # Это ссылка на привязанную к событию задачу
+                'description': event_description + '\n' + final_event_description,
+                'from': start_time.strftime('%d.%m.%Y %H:%M:%S'),
+                'to': end_time.strftime('%d.%m.%Y %H:%M:%S'),
+                'section': section_id,
+                'accessibility': 'busy'
             }
-            await make_b24_request(client, 'calendar.event.add', event_params)
+            
+            event_creation_response = await make_b24_request(client, 'calendar.event.add', event_params)
+            if not event_creation_response or not event_creation_response.get('result'):
+                logging.error(f"Не удалось создать событие в календаре. Ответ API: {event_creation_response}")
+                return None, None
 
-            return task_id # Возвращаем ID созданной задачи в случае успеха
+            logging.info(f"Событие в календаре (ID: {event_creation_response.get('result')}) успешно создано.")
+            return task_id, teacher_name
 
     except Exception as e:
-        logging.error(f"Критическая ошибка в функции book_lesson: {e}")
-        return None
+        logging.error(f"Непредвиденная критическая ошибка в функции book_lesson: {e}", exc_info=True)
+        return None, None

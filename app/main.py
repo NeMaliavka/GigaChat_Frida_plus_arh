@@ -149,11 +149,12 @@ async def main():
 
     # Перед запуском polling удаляем все старые вебхуки
     await bot.delete_webhook(drop_pending_updates=True)
+    allowed_updates = dp.resolve_used_update_types()
     
-    # Запускаем polling
     logging.info("Запуск бота...")
     try:
-        await dp.start_polling(bot)
+        # Передаем список разрешенных обновлений в start_polling
+        await dp.start_polling(bot, allowed_updates=allowed_updates)
     finally:
         await bot.session.close()
         logging.info("Сессия бота закрыта.")
@@ -163,3 +164,17 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Бот остановлен.")
+    
+#     # Запускаем polling
+#     logging.info("Запуск бота...")
+#     try:
+#         await dp.start_polling(bot)
+#     finally:
+#         await bot.session.close()
+#         logging.info("Сессия бота закрыта.")
+
+# if __name__ == "__main__":
+#     try:
+#         asyncio.run(main())
+#     except (KeyboardInterrupt, SystemExit):
+#         logging.info("Бот остановлен.")

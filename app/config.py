@@ -38,7 +38,12 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # --- CRM Bitrix24 (опционально) ---
 BITRIX24_WEBHOOK_URL = os.getenv("BITRIX24_WEBHOOK_URL")
 BITRIX24_RESPONSIBLE_ID = int(os.getenv("BITRIX24_RESPONSIBLE_ID", "1"))
-TEACHER_IDS = int(os.getenv("TEACHER_IDS"))
+#TEACHER_IDS = int(os.getenv("TEACHER_IDS"))
+teacher_ids_str = os.getenv("TEACHER_IDS", "")
+TEACHER_IDS = [int(teacher_id.strip()) for teacher_id in teacher_ids_str.split(',') if teacher_id.strip().isdigit()]
+
+if not TEACHER_IDS:
+    logging.warning("ID преподавателей (TEACHER_IDS) не найдены или указаны в неверном формате в .env файле.")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
 

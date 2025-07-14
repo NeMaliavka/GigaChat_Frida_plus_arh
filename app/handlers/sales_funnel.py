@@ -327,149 +327,90 @@ async def handle_any_text(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "start_booking")
 async def handle_start_booking(callback: types.CallbackQuery, state: FSMContext):
-    """
-    Начинает процесс бронирования: запрашивает слоты и показывает дни.
-    """
-    # Если вы готовы к работе с реальными данными, раскомментируйте первую строку и удалите вторую
-    # teacher_ids_to_check = TEACHER_IDS
-    teacher_ids_to_check = [1] # Для отладки
-    
-    logging.info(f"Начинаю поиск слотов для преподавателей: {teacher_ids_to_check}")
     await callback.message.edit_text("Отлично! Загружаю доступное расписание...")
-
     try:
         portal_tz = ZoneInfo("Europe/Moscow")
         now = datetime.now(portal_tz)
-        
-        # Для реальной работы используйте этот блок
         from_date = now
         to_date = now + timedelta(days=7)
+        free_slots_by_date = await get_free_slots(from_date=from_date, to_date=to_date, user_ids=TEACHER_IDS)
         
-        free_slots_by_date = await get_free_slots(from_date=from_date, to_date=to_date, user_ids=teacher_ids_to_check)
-
-        if free_slots_by_date is None:
-            await callback.message.edit_text("К сожалению, сейчас не удалось загрузить расписание. Попробуйте чуть позже.")
-            return
-
         if not free_slots_by_date:
             await callback.message.edit_text("К сожалению, на ближайшую неделю свободных окон нет.")
             return
 
         await state.update_data(free_slots=free_slots_by_date)
         
-        date_buttons = []
-        for date_str in sorted(free_slots_by_date.keys()):
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-            button_text = format_date_russian(date_obj, format_type='full')
-            date_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"book_date:{date_str}")])
-
+        date_buttons = [[InlineKeyboardButton(text=format_date_russian(datetime.strptime(date_str, '%Y-%m-%d'), 'full'), callback_data=f"book_date:{date_str}")] for date_str in sorted(free_slots_by_date.keys())]
         keyboard = InlineKeyboardMarkup(inline_keyboard=date_buttons)
-        await callback.message.edit_text("Выберите удобный день:", reply_markup=keyboard)
+
+        # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+        # 1. Сначала устанавливаем состояние
         await state.set_state(BookingFSM.choosing_date)
+        # 2. Затем отправляем сообщение с кнопками
+        await callback.message.edit_text("Выберите удобный день:", reply_markup=keyboard)
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     except Exception as e:
-        logging.error(f"Критическая ошибка в handle_start_booking: {e}")
+        logging.error(f"Критическая ошибка в handle_start_booking: {e}", exc_info=True)
         await callback.message.edit_text("Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже.")
     finally:
         await callback.answer()
 
 @router.callback_query(BookingFSM.choosing_date, F.data.startswith("book_date:"))
 async def handle_date_selection(callback: types.CallbackQuery, state: FSMContext):
-    """
-    ЕДИНСТВЕННАЯ И ПРАВИЛЬНАЯ ВЕРСИЯ.
-    Показывает доступное время для выбранной даты.
-    """
     selected_date = callback.data.split(":")[1]
     fsm_data = await state.get_data()
     slots_for_date = fsm_data.get('free_slots', {}).get(selected_date, [])
-
-    if not slots_for_date:
-        await callback.answer("Извините, для этой даты не найдено свободных слотов.", show_alert=True)
-        return
-
-    time_buttons = [
-        InlineKeyboardButton(
-            text=s['time'], 
-            callback_data=f"book_time:{selected_date}T{s['time']}:{s['user_id']}"
-        ) for s in slots_for_date
-    ]
+    
+    unique_times = sorted(list(set(s['time'] for s in slots_for_date)))
+    
+    time_buttons = [InlineKeyboardButton(text=time_str, callback_data=f"book_time:{selected_date}T{time_str}") for time_str in unique_times]
     
     grouped_buttons = [time_buttons[i:i + 3] for i in range(0, len(time_buttons), 3)]
-    grouped_buttons.append([
-        InlineKeyboardButton(text="⬅️ Назад к выбору дня", callback_data="start_booking")
-    ])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=grouped_buttons)
-    date_obj = datetime.strptime(selected_date, '%Y-%m-%d')
-    formatted_date = format_date_russian(date_obj, 'full')
+    grouped_buttons.append([InlineKeyboardButton(text="⬅️ Назад к выбору дня", callback_data="start_booking")])
     
-    await callback.message.edit_text(
-        f"Отлично! Вы выбрали {formatted_date}.\nТеперь выберите удобное время:", 
-        reply_markup=keyboard
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=grouped_buttons)
+    formatted_date = format_date_russian(datetime.strptime(selected_date, '%Y-%m-%d'), 'full')
+    
+    await callback.message.edit_text(f"Вы выбрали {formatted_date}.\nТеперь выберите удобное время:", reply_markup=keyboard)
     await state.set_state(BookingFSM.choosing_time)
     await callback.answer()
 
 @router.callback_query(BookingFSM.choosing_time, F.data.startswith("book_time:"))
 async def handle_time_selection(callback: types.CallbackQuery, state: FSMContext):
-    """
-    ЕДИНСТВЕННАЯ И ПРАВИЛЬНАЯ ВЕРСИЯ.
-    Финальный шаг: бронирует время. Если слот занят, предлагает другие слоты.
-    """
-    await callback.message.edit_text("Секундочку, сверяюсь с расписанием и бронирую выбранное время...")
-
-    parts = callback.data.split(':')
-    datetime_str = f"{parts[1]}:{parts[2]}" # Корректный парсинг для "YYYY-MM-DDTHH:MM"
-    teacher_id_str = parts[3]
-    
+    await callback.message.edit_text("Секундочку, сверяюсь с расписанием...")
+    datetime_str = callback.data.split(":", 1)[1]
     naive_start_time = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M')
     portal_tz = ZoneInfo("Europe/Moscow")
     start_time = naive_start_time.replace(tzinfo=portal_tz)
-
-    teacher_id = int(teacher_id_str)
+    
+    fsm_data = await state.get_data()
     user_db = await get_or_create_user(callback.from_user.id, callback.from_user.username)
     client_data = user_db.user_data or {}
     client_data['username'] = callback.from_user.username
-
-    created_entity_id = await book_lesson(
-        user_id=teacher_id, 
-        start_time=start_time, 
-        duration_minutes=60, 
-        client_data=client_data
-    )
-
+    
+    selected_date_str = start_time.strftime('%Y-%m-%d')
+    selected_time_str = start_time.strftime('%H:%M')
+    
+    available_teachers_ids = [s['user_id'] for s in fsm_data.get('free_slots', {}).get(selected_date_str, []) if s['time'] == selected_time_str]
+    
+    created_entity_id, teacher_name = None, None
+    for teacher_id in available_teachers_ids:
+        logging.info(f"Пытаюсь забронировать слот {start_time} у преподавателя ID: {teacher_id}")
+        temp_id, temp_name = await book_lesson(user_id=teacher_id, start_time=start_time, duration_minutes=60, client_data=client_data)
+        if temp_id:
+            created_entity_id, teacher_name = temp_id, temp_name
+            logging.info(f"Успешное бронирование у преподавателя ID: {teacher_id}")
+            break
+        else:
+            logging.warning(f"Не удалось забронировать у преподавателя ID: {teacher_id}, пробую следующего.")
+            
     if created_entity_id:
-        confirmation_date = format_date_russian(start_time, format_type='short')
-        await callback.message.edit_text(
-            f"Отлично! ✅\n\nВы успешно записаны на пробный урок {confirmation_date}. "
-            f"Вся информация передана преподавателю. До встречи!",
-            reply_markup=None
-        )
+        confirmation_date = format_date_russian(start_time, 'short')
+        await callback.message.edit_text(f"Отлично! ✅\n\nВы успешно записаны на пробный урок {confirmation_date}. Вся информация передана вашему преподавателю: {teacher_name}. До встречи!", reply_markup=None)
         await state.clear()
     else:
-        fsm_data = await state.get_data()
-        selected_date = start_time.strftime('%Y-%m-%d')
-        
-        all_slots_for_day = fsm_data.get('free_slots', {}).get(selected_date, [])
-        remaining_slots = [s for s in all_slots_for_day if f"book_time:{selected_date}T{s['time']}:{s['user_id']}" != callback.data]
-        
-        if remaining_slots:
-            time_buttons = [InlineKeyboardButton(text=s['time'], callback_data=f"book_time:{selected_date}T{s['time']}:{s['user_id']}") for s in remaining_slots]
-            keyboard_rows = [time_buttons[i:i + 3] for i in range(0, len(time_buttons), 3)]
-            keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад к выбору дня", callback_data="start_booking")])
-            await callback.message.edit_text(
-                "😔 Ой, кажется, это время только что заняли. \n"
-                "Но на этот день еще есть свободные окна. Пожалуйста, выберите другой слот:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-            )
-        else:
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Выбрать другой день", callback_data="start_booking")]
-            ])
-            await callback.message.edit_text(
-                "😔 К сожалению, это было последнее свободное время на сегодня, и его только что заняли. "
-                "Пожалуйста, вернитесь и выберите другой день.",
-                reply_markup=reply_markup
-            )
+        await callback.message.edit_text("😔 Ой, кажется, это время только что полностью заняли. Пожалуйста, выберите другое.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Выбрать другой день", callback_data="start_booking")]]))
     
     await callback.answer()
