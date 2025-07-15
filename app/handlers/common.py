@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 # Импортируем нужные функции из соседних модулей
 from app.db.database import get_or_create_user
 # Важно: импортируем функцию запуска FSM, чтобы не дублировать код
-from app.handlers.sales_funnel import start_fsm_scenario
+from app.handlers.onboarding_handlers import start_fsm_scenario
 
 router = Router()
 

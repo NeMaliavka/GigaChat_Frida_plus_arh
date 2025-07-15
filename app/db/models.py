@@ -31,6 +31,12 @@ class User(Base):
 
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    is_enrolled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Флаг, показывающий, заблокирован ли пользователь
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Счетчик нерелевантных запросов
+    irrelevant_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     def __repr__(self):
         return f"<User(id={self.id}, telegram_id={self.telegram_id})>"
 
@@ -63,16 +69,24 @@ class TrialLesson(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)
+    
+    # --- НОВЫЕ ПОЛЯ ---
+    # ID задачи и события из Битрикс24 для управления отменой
+    task_id: Mapped[int] = mapped_column(BigInteger, nullable=True) 
+    event_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    # --- КОНЕЦ НОВЫХ ПОЛЕЙ ---
+
     scheduled_at: Mapped[DateTime] = mapped_column(DateTime, nullable=True)
     status: Mapped[TrialLessonStatus] = mapped_column(
-        Enum(TrialLessonStatus), default=TrialLessonStatus.PLANNED
+        Enum(TrialLessonStatus), 
+        default=TrialLessonStatus.PLANNED, 
+        nullable=False
     )
-    
+
     user: Mapped["User"] = relationship()
 
     def __repr__(self):
-        return f"<TrialLesson(id={self.id}, user_id={self.user_id}, status='{self.status.value}')>"
-
+        return f"<TrialLesson(id={self.id}, user_id={self.user_id}, task_id={self.task_id}, status='{self.status.value}')>"
 class Feedback(Base):
     """Модель для хранения обратной связи после пробного урока."""
     __tablename__ = 'feedback'

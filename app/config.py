@@ -18,8 +18,12 @@ else:
 
 # --- Telegram ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ADMIN_ID = int(os.getenv("OWNER_CHAT_ID", "0"))
-
+# Это позволяет иметь одного или нескольких администраторов.
+admin_ids_str = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(',') if admin_id.strip().isdigit()]
+if not ADMIN_IDS:
+    logging.error("Критическая ошибка: ID администраторов (ADMIN_IDS) не найдены или указаны в неверном формате в .env файле.")
+    
 # --- GigaChat ---
 SBERCLOUD_API_KEY = os.getenv("SBERCLOUD_API_KEY")
 GIGACHAT_MODEL = os.getenv("GIGACHAT_MODEL", "GigaChat-Pro")

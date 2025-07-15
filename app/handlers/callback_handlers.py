@@ -5,6 +5,7 @@ from app.db.database import get_or_create_user
 # Импортируем сервис уведомлений, чтобы сообщить админу о заявке
 from app.core.admin_notifications import notify_admin_on_error
 
+
 router = Router()
 
 @router.callback_query(EnrollmentCallback.filter(F.action == "program_details"))

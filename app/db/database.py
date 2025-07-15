@@ -1,44 +1,43 @@
+# app/db/database.py
+
 import logging
 from datetime import datetime
 from typing import List, Dict
 
-from sqlalchemy import select, func, update, desc
+from sqlalchemy import update, select, delete, func, desc, asc
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
-from app.config import DATABASE_URL
-from app.db.models import Base, User, DialogHistory
+from .models import Base, User, DialogHistory, TrialLesson, TrialLessonStatus
 
-# Создаем асинхронный "движок" и фабрику сессий для работы с БД
-try:
-    async_engine = create_async_engine(DATABASE_URL)
-    async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
-    logging.info("Соединение с базой данных успешно установлено.")
-except Exception as e:
-    logging.error(f"Ошибка подключения к базе данных: {e}")
+# --- Инициализация ---
+DATABASE_URL = "sqlite+aiosqlite:///app/db/local_database.db"
+async_engine = create_async_engine(DATABASE_URL)
+async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
 
 async def init_db():
-    """
-    Инициализирует таблицы в базе данных (создает их, если они не существуют).
-    Эта функция должна вызываться один раз при старте приложения.
-    """
-    async with async_engine.begin() as conn:
-        # Эта строка создает все таблицы, описанные в models.py
-        await conn.run_sync(Base.metadata.create_all)
-    logging.info("Таблицы в базе данных успешно инициализированы.")
+    """Инициализирует базу данных: создает файл и все необходимые таблицы."""
+    try:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logging.info("Соединение с базой данных успешно установлено и таблицы проверены/созданы.")
+    except SQLAlchemyError as e:
+        logging.error(f"Критическая ошибка SQLAlchemy при инициализации базы данных: {e}", exc_info=True)
+        raise
+
+# --- Функции для работы с пользователем ---
 
 async def get_or_create_user(telegram_id: int, username: str | None) -> User:
     """Находит пользователя по telegram_id или создает нового, если он не найден."""
     async with async_session_factory() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
-        
         if not user:
             user = User(telegram_id=telegram_id, username=username)
             session.add(user)
             await session.commit()
-            await session.refresh(user) # Обновляем объект, чтобы получить ID из базы
+            await session.refresh(user)
             logging.info(f"Создан новый пользователь с telegram_id: {telegram_id}")
-        
         return user
 
 async def save_user_details(telegram_id: int, data: dict):
@@ -47,7 +46,7 @@ async def save_user_details(telegram_id: int, data: dict):
         stmt = update(User).where(User.telegram_id == telegram_id).values(user_data=data)
         await session.execute(stmt)
         await session.commit()
-    logging.info(f"Данные для пользователя {telegram_id} успешно сохранены в БД.")
+        logging.info(f"Данные для пользователя {telegram_id} успешно сохранены в БД.")
 
 async def set_onboarding_completed(telegram_id: int, status: bool = True):
     """Устанавливает флаг завершения онбординга для пользователя."""
@@ -55,49 +54,100 @@ async def set_onboarding_completed(telegram_id: int, status: bool = True):
         stmt = update(User).where(User.telegram_id == telegram_id).values(onboarding_completed=status)
         await session.execute(stmt)
         await session.commit()
-    logging.info(f"Статус онбординга для пользователя {telegram_id} изменен на {status}.")
+        logging.info(f"Статус онбординга для пользователя {telegram_id} изменен на {status}.")
 
-async def save_history(user_id: str, role: str, content: str):
+# --- Функции для истории диалога ---
+
+async def save_history(user_id: int, role: str, content: str):
     """Сохраняет одно сообщение в историю диалога."""
     async with async_session_factory() as session:
-        user = await get_or_create_user(int(user_id), None)
-        if user:
-            history_entry = DialogHistory(user_id=user.id, role=role, message=content)
-            session.add(history_entry)
-            await session.commit()
-        else:
-            logging.warning(f"Попытка сохранить историю для несуществующего пользователя {user_id}")
+        history_entry = DialogHistory(user_id=user_id, role=role, message=content)
+        session.add(history_entry)
+        await session.commit()
 
-async def load_history(user_id: str, limit: int = 10) -> List[Dict[str, str]]:
+async def load_history(user_id: int, limit: int = 10) -> List[Dict[str, str]]:
     """Загружает последние сообщения из истории диалога в формате, понятном для LLM."""
     async with async_session_factory() as session:
-        user = await get_or_create_user(int(user_id), None)
-        if not user or not user.id:
-            return []
-        
         result = await session.execute(
             select(DialogHistory)
-            .where(DialogHistory.user_id == user.id)
+            .where(DialogHistory.user_id == user_id)
             .order_by(desc(DialogHistory.created_at))
             .limit(limit)
         )
         history = result.scalars().all()
         return [{"role": msg.role, "content": msg.message} for msg in reversed(history)]
 
+# --- Функции для пробных уроков ---
+
+async def add_trial_lesson(user_id: int, task_id: int, event_id: int, scheduled_at: datetime):
+    """Сохраняет информацию о новой записи на пробный урок."""
+    async with async_session_factory() as session:
+        new_lesson = TrialLesson(
+            user_id=user_id,
+            task_id=task_id,
+            event_id=event_id,
+            scheduled_at=scheduled_at,
+            status=TrialLessonStatus.PLANNED
+        )
+        session.add(new_lesson)
+        await session.commit()
+        logging.info(f"В БД сохранена запись на урок для user_id={user_id} с task_id={task_id}")
+
+async def get_active_lesson(user_id: int) -> TrialLesson | None:
+    """Находит ближайший будущий запланированный урок."""
+    async with async_session_factory() as session:
+        stmt = (
+            select(TrialLesson)
+            .where(
+                TrialLesson.user_id == user_id,
+                TrialLesson.status == TrialLessonStatus.PLANNED,
+                TrialLesson.scheduled_at >= datetime.now()
+            )
+            .order_by(asc(TrialLesson.scheduled_at))
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+async def cancel_lesson_db(lesson_id: int):
+    """Меняет статус урока на 'CANCELLED' в базе данных."""
+    async with async_session_factory() as session:
+        stmt = update(TrialLesson).where(TrialLesson.id == lesson_id).values(status=TrialLessonStatus.CANCELLED)
+        await session.execute(stmt)
+        await session.commit()
+        logging.info(f"Статус урока с ID {lesson_id} изменен на 'Отменен'.")
+
+# --- Функции для модерации и статистики ---
+
+async def increment_irrelevant_count(user_id: int) -> int:
+    """Увеличивает счетчик нерелевантных запросов пользователя на 1."""
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if not user: return 0
+        user.irrelevant_count = (user.irrelevant_count or 0) + 1
+        new_count = user.irrelevant_count
+        await session.commit()
+        return new_count
+
+async def block_user(user_id: int):
+    """Устанавливает флаг is_blocked = True для пользователя."""
+    async with async_session_factory() as session:
+        stmt = update(User).where(User.id == user_id).values(is_blocked=True)
+        await session.execute(stmt)
+        await session.commit()
+        logging.info(f"Пользователь с ID {user_id} был заблокирован.")
+
+async def unblock_and_reset_user(telegram_id: int) -> bool:
+    """Снимает блокировку с пользователя и сбрасывает счетчик."""
+    async with async_session_factory() as session:
+        stmt = update(User).where(User.telegram_id == telegram_id).values(is_blocked=False, irrelevant_count=0)
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.rowcount > 0
+
 async def get_enrolled_student_count() -> int:
-    """Подсчитывает количество пользователей, помеченных как зачисленные на курс."""
+    """Подсчитывает количество пользователей, зачисленных на курс."""
     async with async_session_factory() as session:
         query = select(func.count(User.id)).where(User.is_enrolled == True)
         result = await session.execute(query)
         return result.scalar_one_or_none() or 0
-    
-async def get_last_message_time(user_id: int) -> datetime | None:
-    """Возвращает время последнего сообщения в диалоге для указанного пользователя."""
-    async with async_session_factory() as session:
-        user = await session.get(User, user_id)
-        if not user:
-            return None
-        query = select(DialogHistory.created_at).where(DialogHistory.user_id == user.id).order_by(DialogHistory.created_at.desc()).limit(1)
-        result = await session.execute(query)
-        return result.scalar_one_or_none()
-

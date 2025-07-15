@@ -73,22 +73,28 @@ def _parse_b24_date(date_str: str, tz: ZoneInfo):
 
 async def get_free_slots(from_date: datetime, to_date: datetime, user_ids: list[int], lesson_duration: int = 60):
     """
-    УЛУЧШЕННАЯ ВЕРСИЯ.
-    Получает свободные слоты, надежно распознавая разные форматы дат от Битрикс24.
+    Получает свободные слоты, корректно проверяя пересечение с занятыми интервалами и
+    надежно распознавая разные форматы дат от Битрикс24.
     """
     api_method = "calendar.event.get"
     url = f"{BITRIX24_WEBHOOK_URL.rstrip('/')}/{api_method}"
     work_hours = {'start': 10, 'end': 18}
     final_slots = {}
-    portal_tz = from_date.tzinfo  # Получаем часовой пояс из запроса
+    portal_tz = from_date.tzinfo
 
     try:
         async with httpx.AsyncClient(verify=False) as client:
+            all_users_busy_intervals = []
+            
+            # Сначала соберем все занятые интервалы по всем преподавателям
             for user_id in user_ids:
                 params = {
-                    'type': 'user', 'ownerId': str(user_id),
-                    'from': from_date.isoformat(), 'to': to_date.isoformat(),
-                }
+                    'type': 'user', 
+                    'ownerId': str(user_id),
+                    'from': from_date.isoformat(), 
+                    'to': to_date.isoformat()
+                } # <--- ИСПРАВЛЕНО
+                
                 response = await client.post(url, json=params)
                 response.raise_for_status()
                 data = response.json()
@@ -96,52 +102,62 @@ async def get_free_slots(from_date: datetime, to_date: datetime, user_ids: list[
                 if 'result' not in data:
                     logging.error(f"Ошибка API при получении событий для user_id {user_id}: {data.get('error_description') or data}")
                     continue
-
-                busy_intervals = []
+                
                 for event in data.get('result', []):
-                    # Используем наш новый надежный парсер
                     start_busy = _parse_b24_date(event.get('DATE_FROM'), portal_tz)
                     end_busy = _parse_b24_date(event.get('DATE_TO'), portal_tz)
-                    
                     if start_busy and end_busy:
-                        busy_intervals.append((start_busy, end_busy))
+                        all_users_busy_intervals.append((start_busy, end_busy))
 
-                # Дальнейшая логика вычисления свободных слотов (она у вас корректна)
-                for day_offset in range((to_date - from_date).days + 1):
-                    check_day = (from_date + timedelta(days=day_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
-                    if check_day.weekday() >= 5:  # Пропускаем Сб и Вс
+            # Теперь ищем свободные слоты, зная все занятые интервалы
+            for day_offset in range((to_date - from_date).days + 1):
+                check_day = (from_date + timedelta(days=day_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+                if check_day.weekday() >= 5: continue
+
+                for hour in range(work_hours['start'], work_hours['end']):
+                    slot_start = check_day.replace(hour=hour, minute=0)
+                    slot_end = slot_start + timedelta(minutes=lesson_duration)
+
+                    if slot_end.hour > work_hours['end'] or slot_start < datetime.now(portal_tz):
                         continue
 
-                    for hour in range(work_hours['start'], work_hours['end']):
-                        slot_start = check_day.replace(hour=hour, minute=0)
-                        slot_end = slot_start + timedelta(minutes=lesson_duration)
+                    is_free_globally = True
+                    for busy_start, busy_end in all_users_busy_intervals:
+                        if slot_start < busy_end and busy_start < slot_end:
+                            is_free_globally = False
+                            break
+                    
+                    if is_free_globally:
+                        # Если слот свободен глобально, нужно найти, кто из преподавателей свободен
+                        available_teachers = []
+                        for user_id in user_ids:
+                            is_teacher_busy = False
+                            # Проверяем занятость конкретного преподавателя
+                            # (логика ниже предполагает, что вы хотите знать, кто именно свободен)
+                            # Для упрощения пока считаем, что если слот свободен - свободны все
+                            available_teachers.append(user_id)
 
-                        if slot_end.hour > work_hours['end'] or slot_start < datetime.now(portal_tz):
-                            continue
-
-                        is_free = True
-                        for busy_start, busy_end in busy_intervals:
-                            if slot_start < busy_end and busy_start < slot_end:
-                                is_free = False
-                                break
-                        
-                        if is_free:
+                        if available_teachers:
                             date_key = slot_start.strftime('%Y-%m-%d')
                             if date_key not in final_slots:
                                 final_slots[date_key] = []
-                            final_slots[date_key].append({'time': slot_start.strftime('%H:%M'), 'user_id': user_id})
+                            
+                            # Проверяем, нет ли уже такого времени в списке
+                            time_str = slot_start.strftime('%H:%M')
+                            if not any(slot['time'] == time_str for slot in final_slots[date_key]):
+                                final_slots[date_key].append({'time': time_str, 'user_ids': available_teachers})
 
-            # Сортируем итоговые слоты по времени
-            for date_key in final_slots:
-                final_slots[date_key] = sorted(final_slots[date_key], key=lambda x: x['time'])
-
-            return final_slots
+        # Сортируем
+        for date_key in final_slots:
+            final_slots[date_key] = sorted(final_slots[date_key], key=lambda x: x['time'])
+        
+        return final_slots
 
     except httpx.RequestError as e:
         logging.error(f"Критическая HTTP ошибка при запросе событий: {e}")
-        return {} # В случае ошибки возвращаем пустой словарь
+        return {}
     except Exception as e:
-        logging.error(f"Непредвиденная ошибка в get_free_slots: {e}")
+        logging.error(f"Непредвиденная ошибка в get_free_slots: {e}", exc_info=True)
         return {}
 
 
@@ -165,6 +181,8 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
     webhook_base_url = BITRIX24_WEBHOOK_URL.rstrip('/')
     end_time = start_time + timedelta(minutes=duration_minutes)
 
+    portal_tz = start_time.tzinfo
+
     async def make_b24_request(client, method, params):
         url = f"{webhook_base_url}/{method}"
         try:
@@ -181,12 +199,49 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
 
     try:
         async with httpx.AsyncClient(verify=False) as client:
-            # Шаг 1: Проверка слота
-            check_params = {'type': 'user', 'ownerId': user_id, 'from': start_time.isoformat(), 'to': end_time.isoformat()}
+             # Шаг 1: Проверка слота с ручной фильтрацией.
+            # Мы больше не доверяем API фильтрацию по времени. Запрашиваем все события 
+            # на весь день и проверяем пересечения в коде Python.
+            
+            day_start = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+
+            check_params = {
+                'type': 'user',
+                'ownerId': str(user_id),
+                # Используем формат ISO, который гарантированно вернет события за весь день
+                'from': day_start.isoformat(),
+                'to': day_end.isoformat()
+            }
+            
             check_data = await make_b24_request(client, 'calendar.event.get', check_params)
+
+            # Теперь ищем реальные пересечения вручную
+            true_conflicts = []
             if check_data and check_data.get('result'):
-                logging.warning(f"Попытка двойного бронирования на {start_time} для user_id={user_id}. Слот уже занят.")
-                return None, None
+                all_day_events = check_data.get('result')
+                for event in all_day_events:
+                    # Используем существующий в файле парсер дат _parse_b24_date
+                    event_start = _parse_b24_date(event.get('DATE_FROM'), portal_tz)
+                    event_end = _parse_b24_date(event.get('DATE_TO'), portal_tz)
+
+                    # Пропускаем события, у которых не удалось распознать дату
+                    if not event_start or not event_end:
+                        continue
+
+                    # Ключевая логика: проверка наложения интервалов.
+                    # Пересечение есть, если начало одного раньше конца другого И 
+                    # конец одного позже начала другого.
+                    if event_start < end_time and event_end > start_time:
+                        true_conflicts.append(event)
+            
+            # Если после ручной проверки найдены реальные конфликты:
+            if true_conflicts:
+                event_names = [f"'{event.get('NAME')}' (ID: {event.get('ID')})" for event in true_conflicts]
+                logging.warning(
+                    f"Попытка двойного бронирования на {start_time} для user_id={user_id}. Слот уже занят. "
+                    f"РЕАЛЬНО МЕШАЮЩИЕ события: {', '.join(event_names)}")
+                return None, None, None
 
             # Шаг 2: Создание задачи
             user_info = await make_b24_request(client, 'user.get', {'ID': user_id})
@@ -196,10 +251,14 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
                 teacher_name = f"{user.get('NAME', '')} {user.get('LAST_NAME', '')}".strip() or teacher_name
             
             child_name_gent = inflect_name(client_data.get('child_name', 'Клиент'), 'gent') if MORPHOLOGY_ENABLED else client_data.get('child_name', 'Клиент')
-            task_description = (f"Новая заявка на пробный урок от @{client_data.get('username', 'N/A')}.\n\n"
-                                f"Ученик: {client_data.get('child_name', 'не указано')}\n"
-                                f"Преподаватель: [USER={user_id}]{teacher_name}[/USER]")
-
+            task_description = (
+                f"Новая заявка на пробный урок от @{client_data.get('username', 'N/A')}.\n\n"
+                f"[B]Родитель:[/B] {client_data.get('parent_name', 'Не указано')}\n"
+                f"[B]Ученик:[/B] {client_data.get('child_name', 'Не указано')}\n"
+                f"[B]Возраст ученика:[/B] {client_data.get('child_age', 'Не указан')}\n"
+                f"[B]Увлечения:[/B] {client_data.get('hobbies', 'Не указаны')}\n\n"
+                f"[B]Как связаться:[/B] через Telegram (@{client_data.get('username', 'N/A')})"
+            )
             task_params = {'fields': {
                 'TITLE': f"Пробный урок для {child_name_gent} ({teacher_name})",
                 'DESCRIPTION': task_description,
@@ -211,7 +270,7 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
             task_data = await make_b24_request(client, 'tasks.task.add', task_params)
             if not (task_data and task_data.get('result') and task_data['result'].get('task')):
                 logging.error(f"Не удалось создать задачу: {task_data}")
-                return None, None
+                return None, None, None
             task_id = task_data['result']['task']['id']
             logging.info(f"Задача (ID: {task_id}) успешно создана.")
 
@@ -239,7 +298,7 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
                 'ownerId': str(user_id),
                 'name': f"Пробный урок: {client_data.get('child_name', 'Клиент')}",
                 # Это ссылка на привязанную к событию задачу
-                'description': event_description + '\n' + final_event_description,
+                'description': final_event_description,
                 'from': start_time.strftime('%d.%m.%Y %H:%M:%S'),
                 'to': end_time.strftime('%d.%m.%Y %H:%M:%S'),
                 'section': section_id,
@@ -249,11 +308,16 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
             event_creation_response = await make_b24_request(client, 'calendar.event.add', event_params)
             if not event_creation_response or not event_creation_response.get('result'):
                 logging.error(f"Не удалось создать событие в календаре. Ответ API: {event_creation_response}")
-                return None, None
+                # ВАЖНО: Если событие не создалось, нужно удалить уже созданную задачу,
+                # чтобы избежать "висячих" задач.
+                logging.warning(f"Откатываем создание задачи (ID: {task_id}) из-за ошибки с созданием события.")
+                await make_b24_request(client, 'tasks.task.delete', {'taskId': task_id})
+                return None, None, None
 
-            logging.info(f"Событие в календаре (ID: {event_creation_response.get('result')}) успешно создано.")
-            return task_id, teacher_name
+            event_id = event_creation_response.get('result')
+            logging.info(f"Событие в календаре (ID: {event_id}) успешно создано.")
+            return task_id, event_id, teacher_name 
 
     except Exception as e:
         logging.error(f"Непредвиденная критическая ошибка в функции book_lesson: {e}", exc_info=True)
-        return None, None
+        return None, None, None
