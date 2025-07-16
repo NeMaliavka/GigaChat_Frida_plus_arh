@@ -13,6 +13,8 @@ from app.utils.formatters import format_response_with_inflection
 from app.core.business_logic import process_final_data
 from app.core.admin_notifications import notify_admin_on_error
 from app.db.database import save_user_details, set_onboarding_completed, load_history
+# Импортируем обработчик для "бесшовного" перехода
+from app.handlers import booking_handlers
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЗАГРУЗКА СЦЕНАРИЯ ---
 router = Router()
@@ -53,7 +55,9 @@ async def start_fsm_scenario(message: types.Message, state: FSMContext):
 
     logging.info(f"Запускаем сценарий '{FSM_CONFIG.get('scenario_name', 'N/A')}' для {message.from_user.id}")
     await state.set_state(GenericFSM.InProgress)
-    await state.set_data({'current_step': initial_step_name})
+    fsm_data = await state.get_data()
+    fsm_data['current_step'] = FSM_CONFIG.get("initial_state")
+    await state.set_data(fsm_data)
     
     intro_text = FSM_CONFIG.get("onboarding_intro", "")
     first_question = initial_step_config.get("question", "Как я могу к вам обращаться?")
@@ -83,18 +87,30 @@ async def _advance_fsm_step(message: types.Message, state: FSMContext, fsm_data:
     else:
         # Финал сценария
         await set_onboarding_completed(message.from_user.id)
+        await save_user_details(telegram_id=message.from_user.id, data=fsm_data)
+        logging.info(f"Онбординг для пользователя {message.from_user.id} завершен и сохранен.")
+
+        # 1. В любом случае формируем и отправляем персонализированное сообщение
         processed_data = process_final_data(fsm_data)
-        
         final_template = FSM_CONFIG.get("final_message_template", "Спасибо!")
         final_text = format_response_with_inflection(final_template, processed_data)
         
-        booking_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Выбрать время урока", callback_data="start_booking")]
-        ])
+        # 2. Проверяем, было ли отложенное действие
+        post_action = fsm_data.get("post_onboarding_action")
         
-        await message.answer(final_text, reply_markup=booking_keyboard)
-        await save_user_details(telegram_id=message.from_user.id, data=fsm_data)
-        await state.clear()
+        if post_action == "start_booking":
+            # Если да, то после красивого сообщения сразу запускаем бронирование
+            await message.answer(final_text) # Отправляем персонализированный текст
+            logging.info(f"Выполняем отложенное действие для {message.from_user.id}: запуск бронирования.")
+            await state.clear()
+            await booking_handlers.start_booking_scenario(message, state) # Переходим к выбору времени
+        else:
+            # Если нет, просто показываем финальный текст с кнопкой
+            booking_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Выбрать время урока", callback_data="start_booking")]
+            ])
+            await message.answer(final_text, reply_markup=booking_keyboard)
+            await state.clear()
 
 
 @router.callback_query(F.data.startswith("confirm_layout:"))

@@ -21,7 +21,8 @@ from app.handlers import (
     booking_handlers,
     waitlist_handlers,
     callback_handlers,
-    cancellation_handlers
+    cancellation_handlers,
+    reschedule_handlers
 )
 
 
@@ -56,9 +57,10 @@ async def main():
     
     # Далее - все обработчики FSM-сценариев и колбэков.
     # Их порядок между собой не так важен, т.к. они срабатывают по разным фильтрам.
+    dp.include_router(reschedule_handlers.router)
     dp.include_router(booking_handlers.router)
-    dp.include_router(waitlist_handlers.router)
     dp.include_router(cancellation_handlers.router)
+    dp.include_router(waitlist_handlers.router)    
     dp.include_router(onboarding_handlers.router)
     dp.include_router(callback_handlers.router)
     

@@ -4,8 +4,6 @@ import logging
 from aiogram import Router, types
 from aiogram.filters import Command
 
-# Предполагается, что у вас есть фильтр для проверки, является ли пользователь админом.
-# Если его нет, я покажу, как его создать в Шаге 3.
 from app.filters.admin_filter import IsAdmin 
 from app.db.database import unblock_and_reset_user
 

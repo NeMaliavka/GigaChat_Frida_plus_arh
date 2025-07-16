@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.db.database import get_or_create_user, get_active_lesson, cancel_lesson_db 
-from app.services.bitrix_cancel_service import cancel_booking
+from app.services.bitrix_service import cancel_booking
 
 router = Router()
 

@@ -79,13 +79,14 @@ async def load_history(user_id: int, limit: int = 10) -> List[Dict[str, str]]:
 
 # --- Функции для пробных уроков ---
 
-async def add_trial_lesson(user_id: int, task_id: int, event_id: int, scheduled_at: datetime):
+async def add_trial_lesson(user_id: int, task_id: int, event_id: int, teacher_id: int, scheduled_at: datetime):
     """Сохраняет информацию о новой записи на пробный урок."""
     async with async_session_factory() as session:
         new_lesson = TrialLesson(
             user_id=user_id,
             task_id=task_id,
             event_id=event_id,
+            teacher_id=teacher_id,
             scheduled_at=scheduled_at,
             status=TrialLessonStatus.PLANNED
         )
@@ -93,6 +94,26 @@ async def add_trial_lesson(user_id: int, task_id: int, event_id: int, scheduled_
         await session.commit()
         logging.info(f"В БД сохранена запись на урок для user_id={user_id} с task_id={task_id}")
 
+
+async def update_trial_lesson_time(lesson_id: int, new_scheduled_at: datetime):
+    """
+    Обновляет время и дату запланированного урока после переноса.
+    """
+    async with async_session_factory() as session:
+        try:
+            stmt = (
+                update(TrialLesson)
+                .where(TrialLesson.id == lesson_id)
+                .values(scheduled_at=new_scheduled_at)
+            )
+            await session.execute(stmt)
+            await session.commit()
+            logging.info(f"Время урока с ID {lesson_id} успешно обновлено на {new_scheduled_at}.")
+        except SQLAlchemyError as e:
+            logging.error(f"Ошибка БД при обновлении времени урока {lesson_id}: {e}")
+            await session.rollback()
+
+            
 async def get_active_lesson(user_id: int) -> TrialLesson | None:
     """Находит ближайший будущий запланированный урок."""
     async with async_session_factory() as session:

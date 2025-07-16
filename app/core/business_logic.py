@@ -61,8 +61,6 @@ def process_final_data(data: Dict[str, Any]) -> Dict[str, Any]:
     default_outcome = BUSINESS_RULES.get("default_outcome", {})
     if default_outcome and default_outcome.get("key") not in processed_data:
         processed_data[default_outcome.get("key")] = default_outcome.get("value")
-
-    # --- НАЧАЛО ИСПРАВЛЕННОГО БЛОКА ---
     
     # Обрабатываем имя ребенка
     child_name = processed_data.get("child_name", "")
@@ -82,7 +80,6 @@ def process_final_data(data: Dict[str, Any]) -> Dict[str, Any]:
     # Обрабатываем имя родителя (просто делаем первую букву заглавной)
     parent_name = processed_data.get("parent_name", "")
     processed_data['parent_name_capitalized'] = parent_name.capitalize() if parent_name else "Уважаемый родитель"
-        
-    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
+    
 
     return processed_data

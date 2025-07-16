@@ -20,7 +20,6 @@ async def check_b24_connection():
     """
     Отправляет тестовый запрос к API Битрикс24 для проверки соединения.
     """
-    # --- ИСПРАВЛЕНИЕ: Используем переменную напрямую ---
     if not BITRIX24_WEBHOOK_URL:
         logging.error("URL вебхука Битрикс24 (BITRIX24_WEBHOOK_URL) не настроен в .env файле.")
         return None
@@ -70,6 +69,30 @@ def _parse_b24_date(date_str: str, tz: ZoneInfo):
         except (ValueError, TypeError):
             logging.warning(f"Не удалось распознать формат даты: '{date_str}'. Событие будет пропущено.")
             return None
+        
+# --- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ-УТИЛИТА ---
+async def make_b24_request(client: httpx.AsyncClient, method: str, params: dict) -> dict | None:
+    """
+    Универсальная функция для отправки запросов к API Битрикс24.
+    Централизованно обрабатывает ошибки и логирование.
+    """
+    url = f"{BITRIX24_WEBHOOK_URL.rstrip('/')}/{method}"
+    try:
+        logging.debug(f"Запрос к Bitrix24 -> Метод: {method}, Параметры: {json.dumps(params, ensure_ascii=False, indent=2)}")
+        response = await client.post(url, json=params)
+        response.raise_for_status()
+        data = response.json()
+        if 'result' in data:
+            return data
+        # Логируем ошибку, если API вернул ее в теле ответа
+        logging.error(f"Ошибка API при вызове {method}: {data.get('error_description') or data}")
+        return None
+    except httpx.HTTPStatusError as e:
+        logging.error(f"HTTP-ошибка {e.response.status_code} при вызове {method}. Ответ: {e.response.text}")
+        return None
+    except (httpx.RequestError, json.JSONDecodeError) as e:
+        logging.error(f"Ошибка сети или десериализации JSON при вызове {method}: {e}")
+        return None
 
 async def get_free_slots(from_date: datetime, to_date: datetime, user_ids: list[int], lesson_duration: int = 60):
     """
@@ -182,20 +205,6 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
     end_time = start_time + timedelta(minutes=duration_minutes)
 
     portal_tz = start_time.tzinfo
-
-    async def make_b24_request(client, method, params):
-        url = f"{webhook_base_url}/{method}"
-        try:
-            logging.debug(f"Запрос к Bitrix24. Метод: {method}, Параметры: {json.dumps(params, ensure_ascii=False, indent=2)}")
-            response = await client.post(url, json=params)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logging.error(f"HTTP-ошибка {e.response.status_code} при вызове метода {method}. Ответ: {e.response.text}")
-            return None
-        except httpx.RequestError as e:
-            logging.error(f"Критическая ошибка соединения при вызове метода {method}: {e}")
-            return None
 
     try:
         async with httpx.AsyncClient(verify=False) as client:
@@ -321,3 +330,186 @@ async def book_lesson(user_id: int, start_time: datetime, duration_minutes: int,
     except Exception as e:
         logging.error(f"Непредвиденная критическая ошибка в функции book_lesson: {e}", exc_info=True)
         return None, None, None
+    
+
+async def cancel_booking(task_id: int, event_id: int) -> bool:
+    """
+    Отменяет бронирование, удаляя задачу и событие в календаре Bitrix24.    
+    :param task_id: ID задачи для удаления.
+    :param event_id: ID события календаря для удаления.
+    :return: True в случае успеха, False в случае ошибки.
+    """
+    logging.info(f"Начало отмены в Битрикс24. Задача: {task_id}, Событие: {event_id}")
+    async with httpx.AsyncClient(verify=False) as client:
+        # Шаг 1: Удаление события
+        event_res = await make_b24_request(client, 'calendar.event.delete', {'id': event_id})
+        if not (event_res and event_res.get('result')):
+            logging.warning(f"Не удалось удалить событие (ID: {event_id}) или оно уже было удалено.")
+
+        # Шаг 2: Удаление задачи
+        task_res = await make_b24_request(client, 'tasks.task.delete', {'taskId': task_id})
+        if task_res and task_res.get('result'):
+            logging.info(f"Задача (ID: {task_id}) и связанное событие (ID: {event_id}) успешно удалены.")
+            return True
+        else:
+            logging.error(f"Не удалось удалить задачу (ID: {task_id}). Ответ API: {task_res}")
+            return False
+
+# async def reschedule_booking(
+#     task_id: int, 
+#     event_id: int, 
+#     old_start_time: datetime,
+#     new_start_time: datetime, 
+#     teacher_id: int, 
+#     client_data: dict
+# ) -> bool:
+#     """Переносит запись и реализует атомарный откат в случае ошибки."""
+#     logging.info(f"Начало переноса. Задача: {task_id}, Новое время: {new_start_time}")
+#     new_end_time = new_start_time + timedelta(minutes=60)
+
+#     async with httpx.AsyncClient(verify=False) as client:
+#         # Шаг 1: Обновление события на НОВОЕ время
+#         event_fields = {
+#             'id': event_id, 'type': 'user', 'ownerId': teacher_id,
+#             'from': new_start_time.strftime('%d.%m.%Y %H:%M:%S'),
+#             'to': new_end_time.strftime('%d.%m.%Y %H:%M:%S'),
+#             'description': (f"ЗАПИСЬ ПЕРЕНЕСЕНА.\nНовое время: {new_start_time.strftime('%d.%m.%Y %H:%M')}\n\n"
+#                             f"Ученик: {client_data.get('child_name', 'не указано')}\n"
+#                             f"Контакт: @{client_data.get('username', 'нет')}")
+#         }
+#         event_update_res = await make_b24_request(client, 'calendar.event.update', event_fields)
+#         if not event_update_res:
+#             logging.error(f"Не удалось обновить событие {event_id}. Перенос отменен.")
+#             return False
+        
+#         logging.info(f"Событие {event_id} успешно перенесено на {new_start_time}.")
+
+#         # Шаг 2: Обновление задачи
+#         task_fields = {'taskId': task_id, 'fields': {'DEADLINE': new_start_time.isoformat()}}
+#         task_update_res = await make_b24_request(client, 'tasks.task.update', task_fields)
+
+#         if task_update_res:
+#             logging.info(f"Задача {task_id} успешно обновлена с новым дедлайном.")
+#             return True
+
+#         # --- БЛОК ОТКАТА (срабатывает, если task_update_res is None) ---
+#         logging.critical(f"КРИТИЧЕСКАЯ ОШИБКА: Событие {event_id} перенесено, но не удалось обновить задачу {task_id}! ИНИЦИИРОВАН ОТКАТ.")
+        
+#         old_end_time = old_start_time + timedelta(minutes=60)
+#         rollback_fields = {
+#             'id': event_id, 'type': 'user', 'ownerId': teacher_id,
+#             'from': old_start_time.strftime('%d.%m.%Y %H:%M:%S'),
+#             'to': old_end_time.strftime('%d.%m.%Y %H:%M:%S'),
+#             'description': ("!!! АВТОМАТИЧЕСКИЙ ОТКАТ ПЕРЕНОСА !!!\n"
+#                           "Запись возвращена на исходное время из-за технической ошибки.")
+#         }
+        
+#         rollback_res = await make_b24_request(client, 'calendar.event.update', rollback_fields)
+#         if rollback_res:
+#             logging.info(f"ОТКАТ УСПЕШЕН: Событие {event_id} возвращено на {old_start_time}.")
+#         else:
+#             logging.error(f"ОТКАТ НЕ УДАЛСЯ! Требуется ручное вмешательство для события {event_id} и задачи {task_id}.")
+        
+#         return False
+
+
+# функция для переноса
+async def reschedule_booking(
+    task_id: int, 
+    event_id: int, 
+    old_start_time: datetime, # <--- НОВЫЙ ПАРАМЕТР
+    new_start_time: datetime, 
+    teacher_id: int, 
+    client_data: dict
+) -> bool:
+    """
+    Переносит существующую запись на новое время, обновляя задачу и событие в Битрикс24.
+    :param task_id: ID существующей задачи.
+    :param event_id: ID существующего события.
+    :param new_start_time: Новое время начала урока.
+    :param client_data: Данные о клиенте для обновления описаний.
+    :return: True в случае успеха, False в случае ошибки.
+    """
+    logging.info(f"Начало переноса записи. Задача: {task_id}, Событие: {event_id}, Новое время: {new_start_time}")
+    new_end_time = new_start_time + timedelta(minutes=60)
+    parent_name = client_data.get('parent_name', 'не указано')
+    child_name = client_data.get('child_name', 'не указано')
+    child_age = client_data.get('child_age', 'не указан')
+    hobbies = client_data.get('hobbies', 'не указаны')
+    contact_info = client_data.get('contact_info', 'не указан')
+    username = client_data.get('username', 'не указан')
+
+    # Создаем красивое, многострочное описание
+    description = (
+        f"--- ⚠️ ИНФОРМАЦИЯ О ПЕРЕНОСЕ ---\n"
+        f"Старое время: {old_start_time.strftime('%d.%m.%Y в %H:%M')}\n"
+        f"Новое время: {new_start_time.strftime('%d.%m.%Y в %H:%M')}\n"
+        f"---------------------------------\n\n"
+        f"--- 📋 АНКЕТА КЛИЕНТА ---\n"
+        f"Ученик: {child_name}\n"
+        f"Возраст: {child_age}\n"
+        f"Родитель: {parent_name}\n"
+        f"Контакт Telegram: @{username}\n"
+        f"Доп. контакт (тел/email): {contact_info}\n"
+        f"Интересы/хобби: {hobbies}\n"
+        f"---------------------------------"
+    )
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            # Шаг 1: Обновление события в календаре
+            event_fields = {
+                'id': event_id,
+                'type': 'user', 
+                'ownerId': teacher_id,
+                'from': new_start_time.strftime('%d.%m.%Y %H:%M:%S'),
+                'to': new_end_time.strftime('%d.%m.%Y %H:%M:%S'),
+                'description': description
+            }
+            event_update_res = await make_b24_request(client, 'calendar.event.update', event_fields)
+            if not event_update_res:
+                logging.error(f"Не удалось обновить событие {event_id}. Перенос отменен.")
+                return False
+            logging.info(f"Событие {event_id} успешно перенесено на {new_start_time}.")
+
+            # Шаг 2: Обновление задачи
+            task_fields = {
+                'taskId': task_id,
+                'fields': {
+                    'DEADLINE': new_start_time.isoformat(),
+                }
+            }
+            task_update_res = await make_b24_request(client, 'tasks.task.update', task_fields)
+
+            if not task_update_res:
+                logging.critical(f"КРИТИЧЕСКАЯ ОШИБКА: Событие {event_id} перенесено, но не удалось обновить задачу {task_id}!")
+                # --- НАЧАЛО БЛОКА ОТКАТА ---
+                logging.critical(f"КРИТИЧЕСКАЯ ОШИБКА: Событие {event_id} перенесено, но не удалось обновить задачу {task_id}!")
+                logging.info(f"ИНИЦИИРОВАН АВТОМАТИЧЕСКИЙ ОТКАТ. Возвращаем событие {event_id} на старое время: {old_start_time}")
+                
+                old_end_time = old_start_time + timedelta(minutes=60)
+                rollback_fields = {
+                    'id': event_id,
+                    'type': 'user',
+                    'ownerId': teacher_id,
+                    'from': old_start_time.strftime('%d.%m.%Y %H:%M:%S'),
+                    'to': old_end_time.strftime('%d.%m.%Y %H:%M:%S'),
+                    'description': f"!!! АВТОМАТИЧЕСКИЙ ОТКАТ ПЕРЕНОСА !!!\n" + \
+                                   f"Запись возвращена на исходное время из-за технической ошибки."
+                }
+                
+                rollback_res = await make_b24_request(client, 'calendar.event.update', rollback_fields)
+                if rollback_res:
+                    logging.info(f"ОТКАТ УСПЕШЕН: Событие {event_id} возвращено на {old_start_time}.")
+                else:
+                    logging.error(f"ОТКАТ НЕ УДАЛСЯ! Требуется ручное вмешательство для события {event_id} и задачи {task_id}.")
+                
+                return False # Возвращаем False, так как основная операция не удалась
+                # --- КОНЕЦ БЛОКА ОТКАТА ---
+            
+            logging.info(f"Задача {task_id} успешно обновлена с новым дедлайном.")
+            return True
+
+    except Exception as e:
+        logging.error(f"Непредвиденная ошибка в reschedule_booking: {e}", exc_info=True)
+        return False
+

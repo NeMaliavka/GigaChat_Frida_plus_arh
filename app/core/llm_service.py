@@ -10,6 +10,33 @@ from app.config import (
 )
 from app.knowledge_base.loader import vectorstore, SYSTEM_PROMPT
 
+
+CLASSIFIER_PROMPT = """
+Отвечай ТОЛЬКО "да" или "нет".
+Твоя задача - определить, относится ли запрос пользователя к деятельности онлайн-школы программирования.
+
+ЗАПРОСЫ, НА КОТОРЫЕ ОТВЕТ "ДА":
+- Любые вопросы о курсах, ценах, расписании, пробных уроках.
+- Прямые команды: "Записаться на урок", "Отменить запись", "Перенести встречу".
+- Просьба позвать человека или менеджера.
+- Нечеткие запросы, которые могут подразумевать интерес: "хочу попробовать", "как у вас тут".
+
+ЗАПРОСЫ, НА КОТОРЫЕ ОТВЕТ "НЕТ":
+- Случайный набор букв, бессмыслица.
+- Вопросы на отвлеченные темы: "какая погода", "расскажи анекдот", "кто ты".
+- Оскорбления или грубость.
+
+ПРИМЕРЫ:
+Пользователь: "Отменить запись"
+Твой ответ: да
+---
+Пользователь: "ghbdtn"
+Твой ответ: нет
+---
+Пользователь: "Хочу перенести пробный урок"
+Твой ответ: да
+"""
+
 try:
     gigachat = GigaChat(
         credentials=SBERCLOUD_API_KEY,
@@ -45,43 +72,50 @@ async def correct_user_query(question: str) -> str:
         return question
 
 
-# --- AI-КЛАССИФИКАТОР ---
-def _load_keywords() -> str:
-    try:
-        with open(KEYWORDS_PATH, 'r', encoding='utf-8') as f:
-            return f.read().strip()
-    except Exception:
-        logging.error(f"Не удалось загрузить ключевые слова из {KEYWORDS_PATH}")
-        return ""
+# # --- AI-КЛАССИФИКАТОР ---
+# def _load_keywords() -> str:
+#     try:
+#         with open(KEYWORDS_PATH, 'r', encoding='utf-8') as f:
+#             return f.read().strip()
+#     except Exception:
+#         logging.error(f"Не удалось загрузить ключевые слова из {KEYWORDS_PATH}")
+#         return ""
 
-RELEVANT_KEYWORDS_LIST = _load_keywords()
+#RELEVANT_KEYWORDS_LIST = _load_keywords()
+
 
 async def is_query_relevant_ai(question: str, history: List[Dict[str, str]]) -> bool:
-    if not gigachat or not RELEVANT_KEYWORDS_LIST:
-        logging.warning("Пропуск проверки релевантности (отсутствует сервис или ключевые слова).")
-        return True
+    """
+    Использует LLM с few-shot промптом для точной бинарной классификации релевантности запроса.
+    """
+    if not gigachat:
+        logging.warning("Пропуск проверки релевантности (сервис GigaChat недоступен). Разрешаем запрос.")
+        return True  # В случае сбоя лучше пропустить запрос, чем блокировать пользователя
 
     last_assistant_message = ""
     if history and len(history) > 1 and history[-2]["role"] == "assistant":
         last_assistant_message = history[-2]["content"]
 
-    gateway_prompt = (
-        f"Ты — бинарный классификатор. Определи, является ли запрос пользователя релевантным. "
-        f"Тематика проекта: '{RELEVANT_KEYWORDS_LIST}'.\n"
-        f"Контекст: последняя фраза бота была: '{last_assistant_message}'.\n"
-        f"Запрос пользователя: '{question}'.\n"
-        f"Это релевантный запрос или логичное продолжение диалога? Ответь 'Да' или 'Нет'."
+    # Формируем полный промпт для модели
+    full_prompt = (
+        f"{CLASSIFIER_PROMPT}\n\n"
+        f"--- ДИАЛОГ ДЛЯ АНАЛИЗА ---\n"
+        f"Последняя фраза ассистента: '{last_assistant_message}'\n"
+        f"Новый запрос пользователя: '{question}'\n"
+        f"--- КОНЕЦ ДИАЛОГА ---\n\n"
+        f"Вопрос: Является ли новый запрос пользователя релевантным тематике школы? Ответь 'да' или 'нет'."
     )
+
     try:
-        response = await gigachat.ainvoke([SystemMessage(content=gateway_prompt)], max_tokens=3)
+        response = await gigachat.ainvoke([SystemMessage(content=full_prompt)], max_tokens=3)
         answer = response.content.strip().lower()
         logging.info(f"AI-классификатор ответил: '{answer}' для запроса '{question}'")
         return "да" in answer
     except Exception as e:
-        logging.error(f"Ошибка при проверке релевантности: {e}")
-        return True
-
-
+        logging.error(f"Ошибка при проверке релевантности: {e}. Разрешаем запрос по умолчанию.")
+        return True # При любой ошибке лучше пропустить
+    
+    
 # --- AI-ГЕНЕРАТОР ---
 def _build_prompt(context: str, history: List[Dict[str, str]], context_key: str = "default") -> List[BaseMessage]:
     """

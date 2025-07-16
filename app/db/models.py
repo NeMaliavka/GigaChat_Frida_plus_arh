@@ -68,20 +68,19 @@ class TrialLesson(Base):
     __tablename__ = 'trial_lessons'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)
-    
-    # --- НОВЫЕ ПОЛЯ ---
-    # ID задачи и события из Битрикс24 для управления отменой
-    task_id: Mapped[int] = mapped_column(BigInteger, nullable=True) 
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)    
+    # ID сущностей из Битрикс24
+    task_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
     event_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
-    # --- КОНЕЦ НОВЫХ ПОЛЕЙ ---
-
+    # ID преподавателя, ответственного за урок. Необходимо для переноса.
+    teacher_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
     scheduled_at: Mapped[DateTime] = mapped_column(DateTime, nullable=True)
     status: Mapped[TrialLessonStatus] = mapped_column(
-        Enum(TrialLessonStatus), 
-        default=TrialLessonStatus.PLANNED, 
+        Enum(TrialLessonStatus),
+        default=TrialLessonStatus.PLANNED,
         nullable=False
     )
+
 
     user: Mapped["User"] = relationship()
 

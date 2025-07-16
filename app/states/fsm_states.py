@@ -19,3 +19,4 @@ class BookingFSM(StatesGroup):
     """
     choosing_date = State()
     choosing_time = State()
+    rescheduling_in_progress = State()

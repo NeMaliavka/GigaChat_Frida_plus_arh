@@ -31,3 +31,5 @@ def load_keywords_from_yaml(filename: str = "config/keywords.yaml") -> Dict[str,
     except Exception as e:
         logging.error(f"Ошибка при чтении файла с ключевыми словами '{filename}': {e}")
         return {}
+
+
