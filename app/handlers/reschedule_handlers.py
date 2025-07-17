@@ -9,7 +9,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.db.database import get_or_create_user, get_active_lesson, update_trial_lesson_time
 from app.states.fsm_states import BookingFSM
-from app.handlers.booking_handlers import _show_available_dates, _get_time_keyboard
+# from app.handlers.booking_handlers import _show_available_dates, _get_time_keyboard
+from app.handlers.utils.booking_utils import show_available_dates, get_time_keyboard
 from app.services.bitrix_service import reschedule_booking
 from app.utils.formatters import format_date_russian
 
@@ -66,7 +67,7 @@ async def confirm_reschedule(callback: types.CallbackQuery, state: FSMContext):
     """Подтверждает перенос и запускает показ свободных дат."""
     await callback.message.edit_text("Отлично! Давайте подберем новое время.")
     await state.set_state(BookingFSM.rescheduling_in_progress)
-    await _show_available_dates(callback, state)
+    await show_available_dates(callback, state)
     await callback.answer()
 
 @router.callback_query(BookingFSM.rescheduling_in_progress, F.data.startswith("book_date:"))
@@ -74,7 +75,7 @@ async def handle_reschedule_date_selection(callback: types.CallbackQuery, state:
     """Обрабатывает выбор ДАТЫ в сценарии переноса, СОХРАНЯЯ ПРАВИЛЬНОЕ СОСТОЯНИЕ."""
     selected_date = callback.data.split(":")[1]
     await state.update_data(selected_date=selected_date)
-    keyboard = await _get_time_keyboard(state, selected_date)
+    keyboard = await get_time_keyboard(state, selected_date)
     await callback.message.edit_text(f"Вы выбрали {selected_date}. Теперь выберите удобное время:", reply_markup=keyboard)
     await callback.answer()
 

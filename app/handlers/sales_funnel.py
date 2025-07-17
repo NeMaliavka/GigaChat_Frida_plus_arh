@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from app.handlers.onboarding_handlers import start_fsm_scenario
 from app.handlers.cancellation_handlers import start_cancellation_flow
 from app.handlers.reschedule_handlers import initiate_reschedule_from_text
-from app.handlers import booking_handlers
+from app.handlers import booking_handlers, check_booking_handlers 
 
 # --- 2. Импорт сервисов и утилит ---
 # Сервисы для работы с БД и AI
@@ -89,10 +89,17 @@ async def handle_any_text(message: types.Message, state: FSMContext):
                     await notify_admin_of_request(bot=message.bot, user=message.from_user, request_text=message.text)
                     return
 
-
-
-        # --- ОБРАБОТКА НЕСТАНДАРТНЫХ ВОПРОСОВ (AI И МОДЕРАЦИЯ) ---
-        # 4.1. Проверка релевантности запроса с помощью AI-фильтра
+        # Поиск ответа в готовых шаблонах (для простых вопросов, где не нужна семантика)
+        key, template = find_template_by_keywords(user_text_lower)
+        if template:
+            logging.info(f"Найден шаблон '{key}' для запроса от {user.id}.")
+            user_details = user.user_data or {}
+            user_context_data = {'parent_name':user_details.get('parent_name', message.from_user.first_name), 'child_name':user_details.get('child_name', "ваш ребенок")}
+            response = await build_template_response(template, history, user_context_data)
+            await message.answer(response)
+            return
+        
+        # Проверка релевантности запроса с помощью AI-фильтра
         if not await is_query_relevant_ai(message.text, history):
             remaining_attempts = await increment_irrelevant_count(user.id)
             if remaining_attempts >= IRRELEVANT_QUERY_LIMIT:
@@ -108,15 +115,7 @@ async def handle_any_text(message: types.Message, state: FSMContext):
         # Показываем статус "печатает...", чтобы улучшить UX
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
-        # 4.2. Поиск ответа в готовых шаблонах (для простых вопросов, где не нужна семантика)
-        key, template = find_template_by_keywords(user_text_lower)
-        if template:
-            logging.info(f"Найден шаблон '{key}' для запроса от {user.id}.")
-            user_details = user.user_data or {}
-            user_context_data = {'parent_name':user_details.get('parent_name', message.from_user.first_name), 'child_name':user_details.get('child_name', "ваш ребенок")}
-            response = await build_template_response(template, history, user_context_data)
-            await message.answer(response)
-            return
+        
 
         # 4.3. Если шаблона нет, обращаемся к основной LLM
         logging.info(f"Шаблон не найден. Передаем запрос от {user.id} в основную LLM.")
@@ -126,6 +125,9 @@ async def handle_any_text(message: types.Message, state: FSMContext):
         if "[START_BOOKING]" in llm_response or "[START_ENROLLMENT]" in llm_response:
             logging.info(f"LLM вернул команду на бронирование для {user.id}.")
             await booking_handlers.start_booking_scenario(message, state)
+        elif "CHECK_BOOKING" in llm_response:
+            logging.info(f"LLM инициировал проверку записи для {message.from_user.id}.")
+            await check_booking_handlers.start_check_booking_flow(message, state)
         elif "[CANCEL_BOOKING]" in llm_response:
             logging.info(f"LLM вернул команду на отмену для {user.id}.")
             await start_cancellation_flow(message, state)

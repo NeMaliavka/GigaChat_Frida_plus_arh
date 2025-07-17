@@ -5,6 +5,9 @@ from typing import List, Dict
 from aiogram import Bot
 from aiogram.types import User
 
+# Импортируем типы для создания клавиатуры
+from aiogram.types import User, InlineKeyboardMarkup, InlineKeyboardButton
+
 # Импортируем список ID администраторов из конфига
 from app.config import ADMIN_IDS 
 
@@ -55,8 +58,29 @@ async def notify_admin_of_block(bot: Bot, user: User, reason: str, history: List
         f"<b>ID:</b> <code>{user.id}</code>\n"
         f"<b>Причина:</b> {reason}\n\n"
         f"<b>Последние сообщения:</b>\n{history_text}\n\n"
-        f"<i>Для разблокировки используйте команду:</i> `/unblock {user.id}`"
+        #f"<i>Для разблокировки используйте команду:</i> `/unblock {user.id}`"
     )
+    # Создаем инлайн-кнопку с callback_data, содержащей ID пользователя
+    unblock_button = InlineKeyboardButton(
+        text="🔓 Разблокировать пользователя",
+        callback_data=f"admin_unblock_tg:{user.id}"  # Используем префикс для идентификации
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[unblock_button]])
+    if not ADMIN_IDS:
+        logging.warning("Переменная ADMIN_IDS пуста. Уведомления не будут отправлены.")
+        return
+
+    for admin_id in ADMIN_IDS:
+        try:
+            # Отправляем сообщение с текстом и клавиатурой
+            await bot.send_message(
+                chat_id=admin_id,
+                text=text,
+                reply_markup=keyboard, # <-- Добавляем клавиатуру
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"Не удалось отправить уведомление администратору {admin_id}: {e}")
     await _send_to_admins(bot, text)
 
 
