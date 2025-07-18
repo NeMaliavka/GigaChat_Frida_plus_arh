@@ -1,16 +1,17 @@
-# app/db/database.py
-
 import logging
 from datetime import datetime
 from typing import List, Dict
 
+from sqlalchemy.orm import selectinload
 from sqlalchemy import update, select, delete, func, desc, asc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
+# Импортируем наши модели, включая Enum статусов
 from .models import Base, User, DialogHistory, TrialLesson, TrialLessonStatus
 
 # --- Инициализация ---
+
 DATABASE_URL = "sqlite+aiosqlite:///app/db/local_database.db"
 async_engine = create_async_engine(DATABASE_URL)
 async_session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
@@ -80,7 +81,7 @@ async def load_history(user_id: int, limit: int = 10) -> List[Dict[str, str]]:
 # --- Функции для пробных уроков ---
 
 async def add_trial_lesson(user_id: int, task_id: int, event_id: int, teacher_id: int, scheduled_at: datetime):
-    """Сохраняет информацию о новой записи на пробный урок."""
+    """Сохраняет информацию о новой записи на пробный урок (упрощенная версия)."""
     async with async_session_factory() as session:
         new_lesson = TrialLesson(
             user_id=user_id,
@@ -96,9 +97,7 @@ async def add_trial_lesson(user_id: int, task_id: int, event_id: int, teacher_id
 
 
 async def update_trial_lesson_time(lesson_id: int, new_scheduled_at: datetime):
-    """
-    Обновляет время и дату запланированного урока после переноса.
-    """
+    """Обновляет время и дату запланированного урока после переноса."""
     async with async_session_factory() as session:
         try:
             stmt = (
@@ -113,20 +112,43 @@ async def update_trial_lesson_time(lesson_id: int, new_scheduled_at: datetime):
             logging.error(f"Ошибка БД при обновлении времени урока {lesson_id}: {e}")
             await session.rollback()
 
-            
 async def get_active_lesson(user_id: int) -> TrialLesson | None:
     """Находит ближайший будущий запланированный урок."""
     async with async_session_factory() as session:
         stmt = (
             select(TrialLesson)
+            # --- ИЗМЕНЕНИЕ 1: Используем Enum вместо строк ---
             .where(
                 TrialLesson.user_id == user_id,
-                TrialLesson.status == TrialLessonStatus.PLANNED,
-                TrialLesson.scheduled_at >= datetime.now()
+                TrialLesson.status.notin_([TrialLessonStatus.CANCELLED, TrialLessonStatus.COMPLETED])
             )
-            .order_by(asc(TrialLesson.scheduled_at))
+            .order_by(TrialLesson.scheduled_at.asc())
             .limit(1)
         )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+async def get_all_active_lessons(user_id: int) -> List[TrialLesson]:
+    """Возвращает список всех активных (не отмененных) уроков пользователя."""
+    async with async_session_factory() as session:
+        query = (
+            select(TrialLesson)
+            # --- ИЗМЕНЕНИЕ 2: Используем Enum вместо строк ---
+            .where(
+                TrialLesson.user_id == user_id,
+                TrialLesson.status.notin_([TrialLessonStatus.CANCELLED, TrialLessonStatus.COMPLETED])
+            )
+            .options(selectinload(TrialLesson.user))
+            .order_by(TrialLesson.scheduled_at.asc())
+        )
+        result = await session.execute(query)
+        return result.scalars().all()
+
+async def get_lesson_by_id(lesson_id: int) -> TrialLesson | None:
+    """Находит конкретный урок по его ID, сразу подгружая связанного пользователя."""
+    async with async_session_factory() as session:
+        # Используем select + options для "жадной" загрузки связи с пользователем
+        stmt = select(TrialLesson).where(TrialLesson.id == lesson_id).options(selectinload(TrialLesson.user))
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 

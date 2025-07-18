@@ -58,7 +58,7 @@ async def notify_admin_of_block(bot: Bot, user: User, reason: str, history: List
         f"<b>ID:</b> <code>{user.id}</code>\n"
         f"<b>Причина:</b> {reason}\n\n"
         f"<b>Последние сообщения:</b>\n{history_text}\n\n"
-        #f"<i>Для разблокировки используйте команду:</i> `/unblock {user.id}`"
+        f"<i>Для разблокировки используйте команду:</i> `/unblock {user.id}` или активируйте разблокировку, нажатием на кнопку"
     )
     # Создаем инлайн-кнопку с callback_data, содержащей ID пользователя
     unblock_button = InlineKeyboardButton(
@@ -77,11 +77,10 @@ async def notify_admin_of_block(bot: Bot, user: User, reason: str, history: List
                 chat_id=admin_id,
                 text=text,
                 reply_markup=keyboard, # <-- Добавляем клавиатуру
-                parse_mode="HTML"
-            )
+                parse_mode="HTML")
         except Exception as e:
             logging.error(f"Не удалось отправить уведомление администратору {admin_id}: {e}")
-    await _send_to_admins(bot, text)
+    #await _send_to_admins(bot, text)
 
 
 # --- 3. Уведомление о критической ошибке в коде ---

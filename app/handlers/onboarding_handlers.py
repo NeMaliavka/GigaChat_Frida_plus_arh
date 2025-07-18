@@ -1,4 +1,29 @@
-# app/handlers/onboarding_handlers.py
+# # app/handlers/onboarding_handlers.py
+# import json
+# import logging
+# from pathlib import Path
+# from html import escape
+
+# from aiogram import Router, types, F
+# from aiogram.fsm.context import FSMContext
+# from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+# from app.states.fsm_states import GenericFSM
+# from app.utils.formatters import format_response_with_inflection
+# from app.core.business_logic import process_final_data
+# from app.core.admin_notifications import notify_admin_on_error
+# from app.db.database import save_user_details, set_onboarding_completed, load_history
+# # Импортируем обработчик для "бесшовного" перехода
+# from app.handlers import booking_handlers
+
+# # --- ИНИЦИАЛИЗАЦИЯ И ЗАГРУЗКА СЦЕНАРИЯ ---
+# router = Router()
+# FSM_SCENARIO_PATH = Path(__file__).parent.parent / "knowledge_base" / "scenarios" / "fsm_scenario.json"
+
+# try:
+#     with open(FSM_SCENARIO_PATH, 'r', encoding='utf-8') as f:
+#         FSM_CONFIG = json.load(f)
+# except (FileNotFoundError, json.JSONDecodeError) as e:
 import json
 import logging
 from pathlib import Path
@@ -13,7 +38,6 @@ from app.utils.formatters import format_response_with_inflection
 from app.core.business_logic import process_final_data
 from app.core.admin_notifications import notify_admin_on_error
 from app.db.database import save_user_details, set_onboarding_completed, load_history
-# Импортируем обработчик для "бесшовного" перехода
 from app.handlers import booking_handlers
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЗАГРУЗКА СЦЕНАРИЯ ---
@@ -37,80 +61,84 @@ except ImportError:
     def correct_keyboard_layout(_: str) -> None: return None
     def is_plausible_name(_: str) -> bool: return True
 
+
 # --- ЛОГИКА FSM-СЦЕНАРИЯ (ОНБОРДИНГ) ---
 
-async def start_fsm_scenario(message: types.Message, state: FSMContext):
-    """Запускает FSM-сценарий, задавая самый первый вопрос."""
+async def start_fsm_scenario(message: types.Message, state: FSMContext, start_node: str | None = None, intro_text: str | None = None):
+    """
+    Запускает FSM-сценарий. Может начинать с начала или с указанного шага,
+    а также принимать специальный текст для приветствия.
+    """
     if not FSM_CONFIG:
         await message.answer("Извините, функция записи временно недоступна.")
         return
 
-    initial_step_name = FSM_CONFIG.get("initial_state")
+    # Определяем, с какого шага начинать: с переданного или с начального по умолчанию
+    initial_step_name = start_node or FSM_CONFIG.get("initial_state")
     initial_step_config = FSM_CONFIG.get("states", {}).get(initial_step_name)
 
     if not initial_step_config:
-        logging.error("Критическая ошибка: не найден initial_state в fsm_scenario.json")
+        logging.error(f"Критическая ошибка: не найден шаг '{initial_step_name}' в fsm_scenario.json")
         await message.answer("Ой, у меня небольшая техническая заминка.")
         return
 
-    logging.info(f"Запускаем сценарий '{FSM_CONFIG.get('scenario_name', 'N/A')}' для {message.from_user.id}")
+    logging.info(f"Запускаем сценарий '{FSM_CONFIG.get('scenario_name', 'N/A')}' для {message.from_user.id}, начиная с шага '{initial_step_name}'.")
+
+    # Устанавливаем состояние FSM
     await state.set_state(GenericFSM.InProgress)
+
+    # --- Новая логика отправки приветствия ---
+    # Если нам передали специальный текст (например, для второго ребенка), показываем его.
+    if intro_text:
+        await message.answer(intro_text)
+    elif start_node is None and "onboarding_intro" in FSM_CONFIG:
+        await message.answer(FSM_CONFIG["onboarding_intro"])
+
+    await _ask_next_question(message, state, initial_step_name)
+
+async def _ask_next_question(message: types.Message, state: FSMContext, step_name: str):
+    """
+    Вспомогательная функция, которая задает вопрос для указанного шага FSM.
+    """
+    step_config = FSM_CONFIG.get("states", {}).get(step_name)
+    if not step_config:
+        logging.error(f"Ошибка конфигурации: не найден шаг '{step_name}' для вопроса.")
+        await message.answer("Ой, у меня техническая заминка. Пожалуйста, попробуйте позже.")
+        await state.clear()
+        return
+
+    await state.update_data(current_step=step_name)
     fsm_data = await state.get_data()
-    fsm_data['current_step'] = FSM_CONFIG.get("initial_state")
-    await state.set_data(fsm_data)
-    
-    intro_text = FSM_CONFIG.get("onboarding_intro", "")
-    first_question = initial_step_config.get("question", "Как я могу к вам обращаться?")
-    
-    await message.answer(intro_text + first_question)
-
-
-async def _advance_fsm_step(message: types.Message, state: FSMContext, fsm_data: dict):
-    """Продвигает пользователя на следующий шаг или завершает сценарий."""
-    current_step_name = fsm_data.get("current_step")
-    current_step_config = FSM_CONFIG.get("states", {}).get(current_step_name, {})
-    next_step_name = current_step_config.get("next_state")
-
-    if next_step_name:
-        next_step_config = FSM_CONFIG.get("states", {}).get(next_step_name)
-        if not next_step_config: 
-            logging.error(f"Ошибка конфигурации: не найден следующий шаг '{next_step_name}'")
-            await message.answer("Ой, у меня техническая заминка. Пожалуйста, попробуйте позже.")
-            await state.clear()
-            return
-
-        fsm_data['current_step'] = next_step_name
-        await state.set_data(fsm_data)
+    question_text = format_response_with_inflection(step_config.get("question"), fsm_data.get("user_answers", {}))
         
-        next_question = format_response_with_inflection(next_step_config.get("question"), fsm_data)
-        await message.answer(next_question)
+    await message.answer(question_text)
+
+
+async def _finish_fsm(message: types.Message, state: FSMContext):
+    """Завершает FSM, обрабатывает данные и сохраняет в БД."""
+    fsm_data = await state.get_data()
+    user_answers = fsm_data.get("user_answers", {})
+
+    await save_user_details(telegram_id=message.from_user.id, data=user_answers)
+    await set_onboarding_completed(message.from_user.id)
+    logging.info(f"Онбординг для пользователя {message.from_user.id} завершен и данные сохранены в профиль.")
+    
+    processed_data = process_final_data(user_answers)
+    final_template = FSM_CONFIG.get("final_message_template", "Спасибо!")
+    final_text = format_response_with_inflection(final_template, processed_data)
+
+    post_action = fsm_data.get("post_onboarding_action")
+    if post_action == "start_booking":
+        await message.answer(final_text)
+        logging.info(f"Выполняем отложенное действие для {message.from_user.id}: запуск бронирования.")
+        await state.clear()
+        await booking_handlers.start_booking_scenario(message, state)
     else:
-        # Финал сценария
-        await set_onboarding_completed(message.from_user.id)
-        await save_user_details(telegram_id=message.from_user.id, data=fsm_data)
-        logging.info(f"Онбординг для пользователя {message.from_user.id} завершен и сохранен.")
-
-        # 1. В любом случае формируем и отправляем персонализированное сообщение
-        processed_data = process_final_data(fsm_data)
-        final_template = FSM_CONFIG.get("final_message_template", "Спасибо!")
-        final_text = format_response_with_inflection(final_template, processed_data)
-        
-        # 2. Проверяем, было ли отложенное действие
-        post_action = fsm_data.get("post_onboarding_action")
-        
-        if post_action == "start_booking":
-            # Если да, то после красивого сообщения сразу запускаем бронирование
-            await message.answer(final_text) # Отправляем персонализированный текст
-            logging.info(f"Выполняем отложенное действие для {message.from_user.id}: запуск бронирования.")
-            await state.clear()
-            await booking_handlers.start_booking_scenario(message, state) # Переходим к выбору времени
-        else:
-            # Если нет, просто показываем финальный текст с кнопкой
-            booking_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Выбрать время урока", callback_data="start_booking")]
-            ])
-            await message.answer(final_text, reply_markup=booking_keyboard)
-            await state.clear()
+        booking_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Выбрать время урока", callback_data="start_booking")]
+        ])
+        await message.answer(final_text, reply_markup=booking_keyboard)
+        await state.clear()
 
 
 @router.callback_query(F.data.startswith("confirm_layout:"))
@@ -119,32 +147,48 @@ async def process_layout_confirmation(callback: types.CallbackQuery, state: FSMC
     fsm_data = await state.get_data()
     action = callback.data.split(":")[1]
     
-    final_input = fsm_data.get("suggested_input") if action == "yes" else fsm_data.get("original_input")
+    answers = fsm_data.get("user_answers", {})
+    target_key = fsm_data.get("target_data_key")
+
+    if action == "yes":
+        final_input = fsm_data.get("suggested_input")
+        await callback.message.edit_text(f"Отлично! Записал: {final_input.capitalize()}.")
+    else: # "no"
+        final_input = fsm_data.get("original_input")
+        await callback.message.edit_text(f"Хорошо, оставил ваш вариант: {final_input}.")
+
+    if target_key:
+        answers[target_key] = final_input
     
-    await callback.message.edit_text(f"Отлично! Записал: {final_input.capitalize()}.")
+    await state.update_data(user_answers=answers, original_input=None, suggested_input=None, target_data_key=None)
     
-    target_key = fsm_data.pop("target_data_key")
-    fsm_data[target_key] = final_input
-    
-    # Очищаем временные данные
-    fsm_data.pop("original_input", None)
-    fsm_data.pop("suggested_input", None)
-    await state.set_data(fsm_data)
-    
-    # Продвигаем сценарий дальше
-    await _advance_fsm_step(callback.message, state, fsm_data)
+    current_step_config = FSM_CONFIG.get("states", {}).get(fsm_data.get("current_step"), {})
+    next_step_name = current_step_config.get("next_state")
+    if next_step_name:
+        await _ask_next_question(callback.message, state, next_step_name)
+    else:
+        await _finish_fsm(callback.message, state)
     await callback.answer()
 
 
 @router.message(GenericFSM.InProgress)
 async def handle_fsm_step(message: types.Message, state: FSMContext):
-    """Обрабатывает ответ пользователя на любом шаге основного сценария."""
+    """
+    Обрабатывает ответ пользователя на ЛЮБОМ шаге сценария.
+    Это единая точка входа для всех ответов в FSM.
+    """
     user_text = message.text.strip()
     fsm_data = await state.get_data()
     current_step_name = fsm_data.get("current_step")
+
+    if not current_step_name:
+        logging.warning(f"Получен ответ от {message.from_user.id}, но текущий шаг FSM не определен.")
+        return
+
     current_step_config = FSM_CONFIG.get("states", {}).get(current_step_name)
 
     if not current_step_config:
+        # Обработка ошибки, если шаг не найден в конфигурации
         error_text = f"Ошибка в конфигурации сценария. Не найден шаг: {current_step_name}"
         history = await load_history(str(message.from_user.id), limit=10)
         await notify_admin_on_error(bot=message.bot, user_id=message.from_user.id, username=message.from_user.username, error_description=error_text, history=history)
@@ -171,16 +215,19 @@ async def handle_fsm_step(message: types.Message, state: FSMContext):
             is_valid = is_plausible_name(user_text)
         elif validation_type == "digits":
             is_valid = user_text.isdigit()
+        
+        if not is_valid:
+            await message.answer(current_step_config.get("error_message", "Неверный формат."))
+            return
 
-    if not is_valid:
-        await message.answer(current_step_config.get("error_message", "Неверный формат."))
-        return
-
-    # Сохранение данных и проверка особых условий
+    # Сохранение данных
     data_key = current_step_config["data_key"]
     value_to_store = int(user_text) if validation_type == "digits" else user_text
-    fsm_data[data_key] = value_to_store
     
+    current_answers = fsm_data.get("user_answers", {})
+    current_answers[data_key] = value_to_store
+    await state.update_data(user_answers=current_answers)
+
     # Особая логика для возраста ребенка
     if data_key == 'child_age':
         age = value_to_store
@@ -192,19 +239,21 @@ async def handle_fsm_step(message: types.Message, state: FSMContext):
             ]
             reply_markup = InlineKeyboardMarkup(inline_keyboard=[buttons])
             await message.answer(response_text, reply_markup=reply_markup)
-            
-            await set_onboarding_completed(message.from_user.id) # Считаем онбординг пройденным
-            await save_user_details(telegram_id=message.from_user.id, data=fsm_data)
+            await set_onboarding_completed(message.from_user.id)
+            await save_user_details(telegram_id=message.from_user.id, data=current_answers)
             await state.clear()
             return
         elif age > 17:
             response_text = "Здорово! В таком возрасте мы бы уже рекомендовали взрослые курсы для достижения максимального результата. У нас таких, к сожалению, нет, но мы уверены, что вы найдете отличный вариант!"
             await message.answer(response_text)
-
             await set_onboarding_completed(message.from_user.id)
-            await save_user_details(telegram_id=message.from_user.id, data=fsm_data)
+            await save_user_details(telegram_id=message.from_user.id, data=current_answers)
             await state.clear()
             return
-
     # Переход к следующему шагу
-    await _advance_fsm_step(message, state, fsm_data)
+    next_step_name = current_step_config.get("next_state")
+    if next_step_name:
+        await _ask_next_question(message, state, next_step_name)
+    else:
+        await _finish_fsm(message, state)
+

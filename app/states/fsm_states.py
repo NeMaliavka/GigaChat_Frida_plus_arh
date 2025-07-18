@@ -20,3 +20,9 @@ class BookingFSM(StatesGroup):
     choosing_date = State()
     choosing_time = State()
     rescheduling_in_progress = State()
+
+class CancellationStates(StatesGroup):
+    """
+    Состояния для процесса отмены записи со сбором обратной связи.
+    """
+    awaiting_reason = State() # Состояние ожидания текстовой причины отмены
