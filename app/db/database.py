@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 # Импортируем наши модели, включая Enum статусов
 from .models import Base, User, DialogHistory, TrialLesson, TrialLessonStatus
 
+
 # --- Инициализация ---
 
 DATABASE_URL = "sqlite+aiosqlite:///app/db/local_database.db"

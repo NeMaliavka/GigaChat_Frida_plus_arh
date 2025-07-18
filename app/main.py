@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.bot import DefaultBotProperties
+from aiogram.types import BotCommand
 
 # --- 1. Импорт конфигурации и сервисов ---
 from app.config import TELEGRAM_BOT_TOKEN, LOG_LEVEL
@@ -25,6 +26,18 @@ from app.handlers import (
     reschedule_handlers
 )
 
+async def set_main_menu(bot: Bot):
+    """
+    Создает и устанавливает кнопку 'Меню' со списком команд.
+    """
+    main_menu_commands = [
+        BotCommand(command='/start', description='Главное меню'),
+        BotCommand(command='/booking', description='✍️ Записаться на пробный урок'),
+        BotCommand(command='/my_lessons', description='🗓️ Мои записи'),
+        BotCommand(command='/faq', description='💬 Частые вопросы'),
+        BotCommand(command='/help', description='☎ Позвать менеджера')
+    ]
+    await bot.set_my_commands(main_menu_commands)
 
 async def main():
     """Главная функция для запуска бота."""
@@ -46,15 +59,11 @@ async def main():
     bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=storage)
 
-    # --- 4. РЕГИСТРАЦИЯ РОУТЕРОВ В ПРАВИЛЬНОМ ПОРЯДКЕ ---
-    # Порядок регистрации критически важен для корректной работы!
-    
+    # ---РЕГИСТРАЦИЯ РОУТЕРОВ В ПРАВИЛЬНОМ ПОРЯДКЕ ---
+    # Порядок регистрации критически важен для корректной работы!    
     # Первыми регистрируем админские команды, чтобы они имели наивысший приоритет.
-    dp.include_router(admin_handlers.router)
-    
-    # Затем - общие команды (например, /start), которые должны работать из любого состояния.
-    dp.include_router(common.router)
-    
+    dp.include_router(admin_handlers.router)    
+    dp.include_router(common.router)    
     # Далее - все обработчики FSM-сценариев и колбэков.
     # Их порядок между собой не так важен, т.к. они срабатывают по разным фильтрам.
     dp.include_router(reschedule_handlers.router)
@@ -62,14 +71,13 @@ async def main():
     dp.include_router(cancellation_handlers.router)
     dp.include_router(waitlist_handlers.router)    
     dp.include_router(onboarding_handlers.router)
-    dp.include_router(callback_handlers.router)
-    
+    dp.include_router(callback_handlers.router)    
     # В последнюю очередь регистрируем "catch-all" диспетчер для всех остальных текстовых сообщений.
-    dp.include_router(sales_funnel.router)
-    
+    dp.include_router(sales_funnel.router)      
     logging.info("Все роутеры успешно зарегистрированы.")
+    await set_main_menu(bot)
 
-    # --- 5. Запуск бота ---
+    # --- Запуск бота ---
     # Удаляем вебхук и получаем список обновлений, которые бот будет слушать.
     await bot.delete_webhook(drop_pending_updates=True)
     allowed_updates = dp.resolve_used_update_types()

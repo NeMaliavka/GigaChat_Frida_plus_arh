@@ -1,40 +1,44 @@
 {
-  "rules": [
-    {
-      "comment": "Ребенок младше 9 лет, предлагаем записаться в лист ожидания.",
-      "condition": { "key": "child_age", "type": "lessthan", "value": 9 },
-      "action": {
-        "type": "returnmessage",
-        "key": "final_response",
-        "value": "На данный момент наши курсы рассчитаны на детей от 9 лет, но мы уже активно создаем программу для самых юных программистов!\n\nХотите, мы сообщим вам о запуске в числе первых? Это бесплатно и ни к чему не обязывает.",
-        "keyboard": [
-            { "text": "Да, сообщите мне!", "callback_data": "waitlist:join" },
-            { "text": "Нет, спасибо", "callback_data": "waitlist:cancel" }
-        ]
-      }
-    },
-    {
-      "comment": "Подходящий возраст для курса 'Python для детей'",
-      "condition": { "key": "child_age", "type": "range", "value": [9, 13] },
-      "action": { "type": "set_outcome", "key": "course_name", "value": "Python для детей (30 уроков)" }
-    },
-    {
-      "comment": "Подходящий возраст для курса 'Python для подростков'",
-      "condition": { "key": "child_age", "type": "range", "value": [14, 17] },
-      "action": { "type": "set_outcome", "key": "course_name", "value": "Python для подростков (20 уроков)" }
-    },
-    {
-      "comment": "Ребенок старше 17 лет",
-      "condition": { "key": "child_age", "type": "greaterthan", "value": 17 },
-      "action": {
-        "type": "returnmessage",
-        "key": "final_response",
-        "value": "Здорово! В таком возрасте мы бы уже рекомендовали взрослые курсы для достижения максимального результата. У нас таких, к сожалению, нет, но мы уверены, что вы найдете отличный вариант!"
-      }
+    "rules_description": "Правила для автоматического определения подходящего курса и действия на основе возраста ребенка. Применяются после сбора данных в FSM-сценарии.",
+    "rules": [
+        {
+            "comment": "Ребенок младше 9 лет. Гибкое и эмпатичное сообщение с подстановкой возраста.",
+            "condition": { "key": "child_age", "type": "lessthan", "value": 9 },
+            "action": {
+                "type": "returnmessage",
+                "key": "final_response",
+                "value": "{child_age} лет — прекрасный возраст, чтобы начинать интересоваться IT! Наши курсы рассчитаны на детей от 10 лет, так как программа требует уверенного чтения. Мы будем очень рады видеть вашего ребенка у нас, как только он немного подрастет. А пока можно развивать логику через настольные игры и головоломки — это станет отличным фундаментом!",
+                "keyboard": [
+                    { "text": "Понятно, спасибо!", "callback_data": "end_dialogue" }
+                ]
+            }
+        },
+        {
+            "comment": "Возраст 9-13 лет. Основная группа для курса 'Python для детей'.",
+            "condition": { "key": "child_age", "type": "range", "value": [9, 13] },
+            "action": { "type": "set_outcome", "key": "course_name", "value": "Python для детей (30 уроков)" }
+        },
+        {
+            "comment": "Возраст 14-17 лет. Группа для курса 'Python для подростков'.",
+            "condition": { "key": "child_age", "type": "range", "value": [14, 17] },
+            "action": { "type": "set_outcome", "key": "course_name", "value": "Python для подростков (20 уроков)" }
+        },
+        {
+            "comment": "Ребенок старше 17 лет. Рекомендуем взрослые курсы.",
+            "condition": { "key": "child_age", "type": "greaterthan", "value": 17 },
+            "action": {
+                "type": "returnmessage",
+                "key": "final_response",
+                "value": "Здорово! В таком возрасте мы бы уже рекомендовали взрослые курсы для достижения максимального результата. У нас таких, к сожалению, нет, но мы уверены, что вы найдете отличный вариант!",
+                 "keyboard": [
+                    { "text": "Хорошо, спасибо!", "callback_data": "end_dialogue" }
+                ]
+            }
+        }
+    ],
+    "default_outcome": {
+        "comment": "Исход по умолчанию, если ни одно правило не сработало (маловероятно).",
+        "key": "course_name",
+        "value": "базовый курс по Python"
     }
-  ],
-  "default_outcome": {
-    "key": "course_name",
-    "value": "базовый курс по Python"
-  }
 }

@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -23,44 +24,76 @@ from app.utils.formatters import format_date_russian
 
 router = Router()
 
-# Эта функция больше не нужна, так как интент будет обрабатываться напрямую в sales_funnel.
-# Мы оставляем ее закомментированной для истории.
-# async def initiate_reschedule_from_text(message: types.Message, state: FSMContext):
-#     """Инициирует сценарий переноса из текстового сообщения."""
-#     logging.info(f"Запрос на перенос от {message.from_user.id} через текст. Предлагаем кнопку.")
-#     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-#         [InlineKeyboardButton(text="Перенести запись", callback_data="initiate_reschedule")]
-#     ])
-#     await message.answer(
-#         "Вы хотите перенести существующую запись на другое время?",
-#         reply_markup=keyboard
-#     )
+def get_no_lessons_keyboard():
+    """
+    Создает клавиатуру для случая, когда нет уроков для переноса.
+    """
+    builder = InlineKeyboardBuilder()
+    # Кнопка для старта нового бронирования
+    builder.button(text="✅ Да, записаться", callback_data="start_booking")
+    # Кнопка для возврата в главное меню
+    builder.button(text="⬅️ Вернуться в главное меню", callback_data="main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
-async def start_reschedule_flow(message: types.Message, state: FSMContext, user_id: int | None = None, username: str | None = None):
+def get_reschedule_success_keyboard():
+    """
+    Создает клавиатуру для сообщения об успешном переносе.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗓️ Посмотреть мои записи", callback_data="check_booking")
+    builder.button(text="⬅️ Вернуться в главное меню", callback_data="main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_reschedule_error_keyboard():
+    """
+    Создает клавиатуру для сообщения об ошибке при переносе.
+    """
+    builder = InlineKeyboardBuilder()
+    # Кнопка для повторной попытки (перезапускает сценарий переноса)
+    builder.button(text="🔁 Попробовать еще раз", callback_data="reschedule_booking")
+    # Кнопка для вызова менеджера
+    builder.button(text="👩‍💼 Позвать менеджера", callback_data="human_operator")
+    # Кнопка для возврата в главное меню
+    builder.button(text="⬅️ Вернуться в главное меню", callback_data="main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+async def start_reschedule_flow(message: types.Message, state: FSMContext, user_id: int, username: str | None):
     """
     Находит все активные уроки пользователя.
     Если урок один - запрашивает подтверждение переноса.
     Если уроков несколько - предлагает выбрать, какой перенести.
     """
     await state.clear()
-    # Если ID пользователя не передан явно, берем его из сообщения
-    if user_id is None:
-        user_id = message.from_user.id
-        username = message.from_user.username
-    logging.info(f"Запуск сценария переноса для пользователя {user_id}.")
     user = await get_or_create_user(user_id, username)
+    # Если ID пользователя не передан явно, берем его из сообщения
+    # if user_id is None:
+    #     user_id = message.from_user.id
+    #     username = message.from_user.username
+    logging.info(f"Запуск сценария переноса для пользователя {user_id}.")
+    
     
     # Получаем ВСЕ активные уроки
     active_lessons = await get_all_active_lessons(user.id)
 
     if not active_lessons:
-        logging.warning(f"Пользователь {user.id} попытался перенести запись, но активных уроков нет.")
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Да, записаться", callback_data="start_booking")]])
+        # Этот блок теперь будет срабатывать только если уроков ДЕЙСТВИТЕЛЬНО нет
+        logging.warning(f"Пользователь {user_id} попытался перенести запись, но активных уроков нет.")
+        
+        # Предлагаем записаться, добавив кнопку возврата для удобства
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Да, записаться", callback_data="start_booking")
+        builder.button(text="⬅️ Вернуться в главное меню", callback_data="main_menu")
+        builder.adjust(1)
+        
         await message.answer(
             "Я проверил, но у вас нет запланированных уроков для переноса.\n\n"
             "Давайте я помогу вам записаться на новый?",
-            reply_markup=keyboard
+            reply_markup=builder.as_markup()
         )
         return
 
@@ -194,10 +227,16 @@ async def handle_reschedule_time_selection(callback: types.CallbackQuery, state:
     if success:
         await update_trial_lesson_time(lesson_id, new_start_time)
         new_time_str = format_date_russian(new_start_time, 'short')
-        await callback.message.edit_text(f"✅ Готово! Ваша запись успешно перенесена на {new_time_str}.")
+        await callback.message.edit_text(
+            f"✅ Готово! Ваша запись успешно перенесена на {new_time_str}.",
+            reply_markup=get_reschedule_success_keyboard() 
+        )
     else:
-        await callback.message.edit_text("😔 К сожалению, не удалось перенести запись. Слот мог быть занят. Попробуйте снова или свяжитесь с менеджером.")
-    
+        await callback.message.edit_text(
+            "😔 К сожалению, произошла ошибка и не удалось перенести запись. "
+            "Возможно, этот слот только что заняли. Пожалуйста, попробуйте еще раз или обратитесь к менеджеру.",
+            reply_markup=get_reschedule_error_keyboard()
+        )
     await state.clear()
     await callback.answer()
 

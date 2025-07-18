@@ -216,9 +216,12 @@ async def process_cancellation_reason(message: types.Message, state: FSMContext)
 
     if success:
         await cancel_lesson_db(active_lesson.id)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="⬅️ Вернуться в главное меню", callback_data="main_menu")
         await message.answer(
             "Готово! Ваша запись на урок отменена. Мы учтем ваш отзыв. "
-            "Если захотите записаться снова — я к вашим услугам!"
+            "Если захотите записаться снова — я к вашим услугам!",
+            reply_markup=builder.as_markup()
         )
     else:
         error_description = f"Не удалось отменить бронирование в Bitrix24. Задача: {active_lesson.task_id}, Событие: {active_lesson.event_id}"

@@ -1,47 +1,89 @@
 {
-  "scenario_name": "Стандартный онбординг и запись на пробный урок",
-  "onboarding_intro": "Здравствуйте! Меня зовут Ноубаг, я ваш личный ассистент. Чтобы наше общение было максимально продуктивным, давайте сначала познакомимся!",
-  "initial_state": "ask_parent_name",
-  "states": {
-    "ask_parent_name": {
-      "comment": "Шаг 1: Задаем вопрос про имя родителя.",
-      "question": "Как я могу к вам обращаться?",
-      "data_key": "parent_name",
-      "needs_layout_correction": true,
-      "validation": "name",
-      "error_message": "Мне кажется, это не очень похоже на имя. Пожалуйста, введите ваше настоящее имя кириллицей.",
-      "next_state": "ask_child_name"
-    },
-    "ask_child_name": {
-      "comment": "Шаг 2: Задаем вопрос про имя ребенка.",
-      "question": "Приятно познакомиться, {parent_name}! А как зовут вашего будущего чемпиона по программированию?",
-      "data_key": "child_name",
-      "needs_layout_correction": true,
-      "validation": "name",
-      "error_message": "Пожалуйста, введите настоящее имя вашего ребенка, используя только буквы.",
-      "next_state": "ask_child_age"
-    },
-    "ask_child_age": {
-      "comment": "Шаг 3: Задаем вопрос про возраст ребенка.",
-      "question": "Сколько лет {child_name:datv}?",
-      "data_key": "child_age",
-      "validation": "digits",
-      "error_message": "Пожалуйста, введите возраст цифрами.",
-      "next_state": "ask_child_hobbies"
-    },
-    "ask_child_hobbies": {
-      "comment": "Шаг 4: Задаем вопрос про хобби.",
-      "question": "Понял, спасибо! Подскажите, пожалуйста, чем увлекается {child_name}? Это поможет преподавателю найти с ним общий язык.",
-      "data_key": "child_hobbies",
-      "next_state": "ask_contact"
-    },
-      "ask_contact": {
-      "question": "Отлично! И последнее: оставьте, пожалуйста, ваш номер телефона или email, чтобы мы могли с вами связаться для подтверждения деталей.",
-      "data_key": "parent_contact",
-      "validation": "any",
-      "next_state": null
+    "scenario_name": "Улучшенный онбординг и запись на пробный урок",
+    "initial_state": "ask_parent_name",
+    "states": {
+        "ask_parent_name": {
+            "comment": "Шаг 1: Запрос имени родителя. Добавлена кнопка отмены.",
+            "question": "Для начала, подскажите, пожалуйста, как я могу к вам обращаться?",
+            "data_key": "parent_name",
+            "validation": "name",
+            "error_message": "Простите, не совсем понял. Напишите, пожалуйста, ваше имя кириллицей, чтобы я мог правильно к вам обращаться.",
+            "next_state": "ask_child_name",
+            "keyboard": [
+                [
+                    { "text": "❌ Отменить запись", "callback_data": "fsm_cancel" }
+                ]
+            ]
+        },
+        "ask_child_name": {
+            "comment": "Шаг 2: Запрос имени ребенка. Добавлены кнопки навигации.",
+            "question": "Приятно познакомиться, {parent_name}! А как зовут вашего будущего чемпиона по программированию?",
+            "data_key": "child_name",
+            "validation": "name",
+            "error_message": "Кажется, в имени есть что-то кроме букв. Пожалуйста, напишите имя кириллицей, чтобы я мог правильно к нему обращаться.",
+            "next_state": "ask_child_age",
+            "keyboard": [
+                [
+                    { "text": "⬅️ Назад", "callback_data": "fsm_back:ask_parent_name" },
+                    { "text": "❌ Отменить запись", "callback_data": "fsm_cancel" }
+                ]
+            ]
+        },
+        "ask_child_age": {
+            "comment": "Шаг 3: Запрос возраста ребенка. Формулировки смягчены, добавлены кнопки.",
+            "question": "Отлично! А сколько лет {child_name:datv}?",
+            "data_key": "child_age",
+            "validation": "digits",
+            "error_message": "Чтобы я не ошибся, напишите, пожалуйста, возраст просто цифрами (например, 12).",
+            "next_state": "ask_child_hobbies",
+            "keyboard": [
+                [
+                    { "text": "⬅️ Назад", "callback_data": "fsm_back:ask_child_name" },
+                    { "text": "❌ Отменить запись", "callback_data": "fsm_cancel" }
+                ]
+            ]
+        },
+        "ask_child_hobbies": {
+            "comment": "Шаг 4: Вопрос про хобби. Текст сохранен, добавлены кнопки.",
+            "question": "Понял, спасибо! Расскажите, пожалуйста, чем увлекается {child_name}? Это поможет преподавателю найти с ним или с ней общий язык.",
+            "data_key": "child_hobbies",
+            "next_state": "ask_contact",
+            "keyboard": [
+                [
+                    { "text": "⬅️ Назад", "callback_data": "fsm_back:ask_child_age" },
+                    { "text": "❌ Отменить запись", "callback_data": "fsm_cancel" }
+                ]
+            ]
+        },
+        "ask_contact": {
+            "comment": "Шаг 5: Запрос контакта. Текст стал более доверительным, добавлены кнопки.",
+            "question": "Спасибо, это очень поможет на уроке! И последний шаг: оставьте, пожалуйста, ваш номер телефона или email. Он нужен, чтобы мы могли отправить подтверждение записи и напомнить о занятии.",
+            "data_key": "parent_contact",
+            "validation": "any",
+            "next_state": "confirm_data",
+            "keyboard": [
+                [
+                    { "text": "⬅️ Назад", "callback_data": "fsm_back:ask_child_hobbies" },
+                    { "text": "❌ Отменить запись", "callback_data": "fsm_cancel" }
+                ]
+            ]
+        },
+        "confirm_data": {
+            "comment": "ФИНАЛЬНЫЙ ШАГ: Сводка и подтверждение данных. Повышает доверие и позволяет исправить ошибки.",
+            "question": "Отлично, {parent_name}, спасибо! Давайте все проверим:\n\n- Имя ребенка: **{child_name}**\n- Возраст: **{child_age}**\n- Увлечения: **{child_hobbies}**\n- Ваш контакт для связи: **{parent_contact}**\n\nВсе верно?",
+            "data_key": "final_confirmation",
+            "next_state": null,
+            "keyboard": [
+                [
+                    { "text": "✅ Все верно!", "callback_data": "fsm_confirm_and_book" }
+                ],
+                [
+                    { "text": "⬅️ Исправить данные", "callback_data": "fsm_back:ask_parent_name" }
+                ],
+                [
+                    { "text": "❌ Отменить запись", "callback_data": "fsm_cancel" }
+                ]
+            ]
+        }
     }
-  },
-  
-  "final_message_template": "Спасибо! Я все записал.\n\nСудя по возрасту, {child_name:datv} идеально подойдет наш курс «{course_name}».\n\n{parent_name}, хотите записать {child_name:accs} на бесплатный пробный урок, чтобы посмотреть, как все устроено изнутри?"
 }
